@@ -51,9 +51,44 @@ For a preflight with audio and a brief containing supported visual requirements,
 2. Campaign brief interpretation
 3. Visual observation across all sampled frames and supported requirements
 
+## Phase 4: hackathon hardening
+
+Phase 4 adds deployment portability and report handoff without adding another model call:
+
+- A deterministic **Fix Package** turns existing warnings, failures, and non-passing visual observations into an actionable checklist. Copy buttons appear only when PostLint has concrete replacement text; unsupported and unevaluated requirements never receive invented fixes.
+- Report sections identify the important provenance boundary: **Deterministic**, **AI-interpreted**, or **AI-observed**. The core rule remains: AI interprets; code verifies.
+- **Load FocusFlow demo** fills a clearly labeled synthetic caption and campaign brief. The presenter must still select a real demo video, which runs through the normal preflight endpoint.
+- The processing UI names pipeline stages without claiming a percentage, blocks concurrent submissions from the same form, and continues to revoke browser object URLs.
+
+### Portable ffmpeg and ffprobe
+
+PostLint resolves each media executable independently in this order:
+
+1. `FFMPEG_PATH` or `FFPROBE_PATH`, when explicitly configured
+2. The installed `ffmpeg-static` and `@derhuerst/ffprobe-static` package binaries
+3. `ffmpeg` or `ffprobe` on the local system `PATH`
+
+All process calls use Node’s `execFile` with an argument array. Binary paths and filenames are never interpolated into a shell command. The static packages download a platform-specific binary during dependency installation, so dependencies must be installed for the same operating system and CPU architecture as the deployment artifact.
+
+Next keeps both binary packages external to the server bundle so their real filesystem paths remain available to the Node.js route handler. A Node.js runtime is required; static-export hosting is not supported by the analysis endpoint.
+
+### Upload configuration
+
+The browser and route handler consume the same upload policy:
+
+| Environment | Default video limit | UI copy |
+| --- | ---: | --- |
+| Local development | 250 MB | `Local analysis: videos up to 250 MB` |
+| Hosted demo (`POSTLINT_HOSTED_DEMO=true`, Vercel, or Netlify) | 4 MB | `Hackathon demo: videos up to 4 MB` |
+| Explicit `POSTLINT_MAX_UPLOAD_MB` | Configured value | Configured limit |
+
+The client rejects an oversized selection before uploading. The route also checks the request content length when available and validates the actual `File.size` after multipart parsing. A hosting provider may reject an oversized request before application code runs; the deliberately small demo limit is designed to avoid presenting that infrastructure boundary as an application bug.
+
+The multipart boundary is intentionally isolated in the route handler so a later direct object-storage upload can replace transport without rewriting the lint pipeline. Object storage is not implemented in this phase.
+
 ## Run locally
 
-Requirements: Node.js 20+, npm, `ffprobe`, and `ffmpeg` available on `PATH`.
+Requirements: Node.js 20+ and npm. Packaged static media binaries are installed with dependencies; system `ffmpeg` and `ffprobe` remain optional development fallbacks.
 
 ```bash
 npm install
@@ -66,13 +101,22 @@ Add a Gemini API key to `.env.local`:
 GEMINI_API_KEY=your_key_here
 ```
 
+For the hosted hackathon profile, configure:
+
+```dotenv
+POSTLINT_HOSTED_DEMO=true
+POSTLINT_MAX_UPLOAD_MB=4
+```
+
+`POSTLINT_MAX_UPLOAD_MB` is optional because hosted mode defaults to 4 MB. Set `FFMPEG_PATH` and `FFPROBE_PATH` only when the deployment supplies its own binaries.
+
 Then start the app:
 
 ```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000), upload an MP4 or MOV file (up to 250 MB), choose a target, optionally add a caption and campaign brief, and run preflight.
+Open [http://localhost:3000](http://localhost:3000), upload an MP4 or MOV file within the limit shown in the UI, choose a target, optionally add a caption and campaign brief, and run preflight.
 
 Uploads, extracted audio, sampled frames, and other analysis artifacts are temporary and removed after every request, including failures. `.env.local` is ignored by Git; the API key is read only in server code.
 
@@ -81,6 +125,7 @@ Uploads, extracted audio, sampled frames, and other analysis artifacts are tempo
 ```bash
 npm test
 npm run lint
+npm run typecheck
 npm run build
 ```
 

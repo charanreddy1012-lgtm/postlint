@@ -1,6 +1,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
+import { mediaBinaryPath } from "@/lib/postlint/media/binaries";
+
 const execFileAsync = promisify(execFile);
 
 export class AudioExtractionError extends Error {
@@ -16,7 +18,7 @@ export async function extractSpeechAudio(
 ): Promise<void> {
   try {
     await execFileAsync(
-      "ffmpeg",
+      mediaBinaryPath("ffmpeg"),
       [
         "-v",
         "error",

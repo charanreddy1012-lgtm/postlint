@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
+import { mediaBinaryPath } from "@/lib/postlint/media/binaries";
 import type { VideoFrame } from "@/lib/postlint/types";
 
 const execFileAsync = promisify(execFile);
@@ -59,7 +60,7 @@ export async function extractVideoFrames(
         `frame-${String(index + 1).padStart(2, "0")}.jpg`,
       );
       await execFileAsync(
-        "ffmpeg",
+        mediaBinaryPath("ffmpeg"),
         [
           "-v",
           "error",

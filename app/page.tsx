@@ -1,5 +1,6 @@
 import { PreflightWorkspace } from "@/components/postlint/preflight-workspace";
+import { getUploadConfig } from "@/lib/postlint/config/upload";
 
 export default function Home() {
-  return <PreflightWorkspace />;
+  return <PreflightWorkspace uploadConfig={getUploadConfig()} />;
 }

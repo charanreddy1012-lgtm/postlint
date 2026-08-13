@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
+import { mediaBinaryPath } from "@/lib/postlint/media/binaries";
 import type { MediaMetadata } from "@/lib/postlint/types";
 
 const execFileAsync = promisify(execFile);
@@ -85,7 +86,7 @@ export async function probeMedia(filePath: string): Promise<MediaMetadata> {
 
   try {
     const result = await execFileAsync(
-      "ffprobe",
+      mediaBinaryPath("ffprobe"),
       [
         "-v",
         "error",

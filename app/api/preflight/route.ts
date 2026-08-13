@@ -7,6 +7,7 @@ import {
   parseCampaignBrief,
   transcribeAudio,
 } from "@/lib/postlint/ai/gemini";
+import { getUploadConfig } from "@/lib/postlint/config/upload";
 import { MediaProbeError, probeMedia } from "@/lib/postlint/media/ffprobe";
 import { extractSpeechAudio } from "@/lib/postlint/media/audio";
 import { extractVideoFrames } from "@/lib/postlint/media/frames";
@@ -23,7 +24,6 @@ import type {
 
 export const runtime = "nodejs";
 
-const MAX_UPLOAD_BYTES = 250 * 1024 * 1024;
 const ALLOWED_EXTENSIONS = new Set([".mp4", ".mov"]);
 const ALLOWED_MIME_TYPES = new Set(["video/mp4", "video/quicktime"]);
 const TARGETS = new Set<TargetPlatform>(["tiktok", "instagram", "youtube"]);
@@ -35,14 +35,21 @@ function errorResponse(message: string, status: number): Response {
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const uploadConfig = getUploadConfig();
   const contentType = request.headers.get("content-type") ?? "";
   if (!contentType.toLowerCase().startsWith("multipart/form-data")) {
     return errorResponse("Expected a multipart video upload.", 415);
   }
 
   const contentLength = Number(request.headers.get("content-length"));
-  if (Number.isFinite(contentLength) && contentLength > MAX_UPLOAD_BYTES + 1_000_000) {
-    return errorResponse("Video is too large. The local upload limit is 250 MB.", 413);
+  if (
+    Number.isFinite(contentLength) &&
+    contentLength > uploadConfig.maxUploadBytes + 512 * 1024
+  ) {
+    return errorResponse(
+      `Video is too large. ${uploadConfig.label}.`,
+      413,
+    );
   }
 
   let formData: FormData;
@@ -83,8 +90,8 @@ export async function POST(request: Request): Promise<Response> {
     return errorResponse("The selected video is empty.", 400);
   }
 
-  if (upload.size > MAX_UPLOAD_BYTES) {
-    return errorResponse("Video is too large. The local upload limit is 250 MB.", 413);
+  if (upload.size > uploadConfig.maxUploadBytes) {
+    return errorResponse(`Video is too large. ${uploadConfig.label}.`, 413);
   }
 
   let temporaryDirectory: string | undefined;

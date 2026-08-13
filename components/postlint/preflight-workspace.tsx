@@ -10,6 +10,9 @@ import {
   useState,
 } from "react";
 
+import { buildFixPackage } from "@/lib/postlint/fixes/fix-package";
+import type { FixItem } from "@/lib/postlint/fixes/fix-package";
+import type { UploadConfig } from "@/lib/postlint/config/upload";
 import type {
   ApiError,
   LintResult,
@@ -31,8 +34,24 @@ import {
   XIcon,
 } from "@/components/postlint/icons";
 
-const MAX_UPLOAD_BYTES = 250 * 1024 * 1024;
 const ACCEPTED_EXTENSIONS = [".mp4", ".mov"];
+const PROCESSING_STAGES = [
+  "Inspecting media",
+  "Transcribing audio",
+  "Parsing campaign",
+  "Checking requirements",
+  "Inspecting visual evidence",
+  "Building report",
+] as const;
+
+const FOCUSFLOW_DEMO_CAPTION =
+  "FocusFlow helps me stay on track. Get 15% off with code FLOW15.";
+const FOCUSFLOW_DEMO_BRIEF = `Sponsored FocusFlow campaign.
+Mention FocusFlow and include the promo code FLOW20.
+State that viewers receive 20% off.
+Include a clear sponsorship disclosure and a simple call to action.
+Show the FocusFlow product or logo clearly.
+Do not use the phrase “guaranteed results.”`;
 
 const targets: Array<{
   id: TargetPlatform;
@@ -44,16 +63,23 @@ const targets: Array<{
   { id: "youtube", name: "YouTube Shorts", shortName: "YT" },
 ];
 
-function getFileError(file: File): string | null {
+function getFileError(file: File, uploadConfig: UploadConfig): string | null {
   const lowerName = file.name.toLowerCase();
   if (!ACCEPTED_EXTENSIONS.some((extension) => lowerName.endsWith(extension))) {
     return "Choose an MP4 or MOV video file.";
   }
-  if (file.size > MAX_UPLOAD_BYTES) {
-    return "That video is over the 250 MB local upload limit.";
+  if (file.size > uploadConfig.maxUploadBytes) {
+    return `That video is over the allowed limit. ${uploadConfig.label}.`;
   }
   if (file.size === 0) return "That video file is empty.";
   return null;
+}
+
+async function copyText(text: string): Promise<void> {
+  if (!navigator.clipboard) {
+    throw new Error("Clipboard access is unavailable in this browser.");
+  }
+  await navigator.clipboard.writeText(text);
 }
 
 function formatBytes(bytes?: number): string {
@@ -262,7 +288,7 @@ function TranscriptSection({
           <h2>Timestamped speech</h2>
         </div>
         {status === "complete" && (
-          <span className="analysis-badge analysis-badge--complete">Gemini assisted</span>
+          <span className="analysis-badge analysis-badge--ai">AI-interpreted</span>
         )}
       </div>
 
@@ -343,6 +369,14 @@ function CampaignSection({
         <div>
           <p className="eyebrow">Campaign preflight</p>
           <h2>Brief requirements</h2>
+          <div className="provenance-row">
+            <span className="analysis-badge analysis-badge--ai">
+              AI-interpreted brief
+            </span>
+            <span className="analysis-badge analysis-badge--code">
+              Deterministic checks
+            </span>
+          </div>
         </div>
         {report.campaign && (
           <div className="flex flex-wrap gap-2">
@@ -419,6 +453,11 @@ function VisualSection({
         <div>
           <p className="eyebrow">Visual checks</p>
           <h2>Observed frame evidence</h2>
+          <div className="provenance-row">
+            <span className="analysis-badge analysis-badge--observed">
+              AI-observed
+            </span>
+          </div>
         </div>
         {report.visualAnalysis && (
           <div className="flex flex-wrap gap-2">
@@ -491,6 +530,150 @@ function VideoPreview({
           Your browser cannot preview this video format.
         </video>
       </div>
+    </section>
+  );
+}
+
+function FixCard({
+  item,
+  copyStatus,
+  onCopy,
+  onSeek,
+}: {
+  item: FixItem;
+  copyStatus: string | null;
+  onCopy: (text: string, id: string) => void;
+  onSeek: (seconds: number) => void;
+}) {
+  return (
+    <article className="fix-card">
+        <div className="fix-card__heading">
+          <div>
+            <span className="fix-source">
+              {item.provenance === "deterministic"
+                ? "Deterministic finding"
+                : "AI-observed evidence"}
+            </span>
+            <h3>{item.issue}</h3>
+          </div>
+          {item.timestampStart !== undefined && (
+            <button
+              className="timestamp-pill timestamp-button"
+              type="button"
+              onClick={() => onSeek(item.timestampStart!)}
+            >
+              {formatTimestamp(item.timestampStart)}
+              {item.timestampEnd !== undefined &&
+                `–${formatTimestamp(item.timestampEnd)}`}
+            </button>
+          )}
+        </div>
+
+        {(item.detected || item.expected) && (
+          <div className="evidence-grid">
+            {item.detected && (
+              <div>
+                <span>Detected</span>
+                <strong>{item.detected}</strong>
+              </div>
+            )}
+            {item.expected && (
+              <div>
+                <span>Expected</span>
+                <strong>{item.expected}</strong>
+              </div>
+            )}
+          </div>
+        )}
+
+        <p className="fix-recommendation">
+          <span>Recommended fix</span>
+          {item.recommendedFix}
+        </p>
+
+        {item.replacementText && (
+          <div className="replacement-row">
+            <code>{item.replacementText}</code>
+            <button
+              type="button"
+              onClick={() => onCopy(item.replacementText!, item.id)}
+            >
+              {copyStatus === item.id ? "Copied" : "Copy fix"}
+            </button>
+          </div>
+        )}
+    </article>
+  );
+}
+
+function FixPackageSection({
+  report,
+  onSeek,
+}: {
+  report: PreflightReport;
+  onSeek: (seconds: number) => void;
+}) {
+  const fixPackage = buildFixPackage(report);
+  const [copyStatus, setCopyStatus] = useState<string | null>(null);
+
+  async function handleCopy(text: string, id: string) {
+    try {
+      await copyText(text);
+      setCopyStatus(id);
+      window.setTimeout(() => setCopyStatus(null), 1_800);
+    } catch {
+      setCopyStatus("error");
+    }
+  }
+
+  return (
+    <section className="report-subsection fix-package">
+      <div className="subsection-heading campaign-heading">
+        <div>
+          <p className="eyebrow">Fix Package</p>
+          <h2>Actionable handoff</h2>
+          <p className="provenance-line">
+            Generated from this report only. No additional AI analysis.
+          </p>
+        </div>
+        {fixPackage.items.length > 0 && (
+          <button
+            type="button"
+            className="copy-all-button"
+            onClick={() => handleCopy(fixPackage.copyAllText, "all")}
+          >
+            {copyStatus === "all" ? "Copied all fixes" : "Copy all fixes"}
+          </button>
+        )}
+      </div>
+
+      {copyStatus === "error" && (
+        <p className="copy-error" role="status">
+          Clipboard access was blocked. Copy the replacement text manually.
+        </p>
+      )}
+
+      {fixPackage.items.length === 0 ? (
+        <div className="availability-note">
+          <CheckIcon className="size-4 shrink-0" />
+          <div>
+            <strong>No actionable fixes</strong>
+            <p>Evaluated checks passed without warnings or failures.</p>
+          </div>
+        </div>
+      ) : (
+        <div className="fix-list">
+          {fixPackage.items.map((item) => (
+            <FixCard
+              item={item}
+              copyStatus={copyStatus}
+              key={item.id}
+              onCopy={handleCopy}
+              onSeek={onSeek}
+            />
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -622,11 +805,16 @@ function Report({
           </div>
         </div>
 
-        <div className="mt-7 border-t border-slate-100 pt-6">
-          <p className="eyebrow">Media checks</p>
-          <h2 className="mt-1 text-lg font-semibold tracking-tight text-slate-950">
-            Local file validation
-          </h2>
+        <div className="mt-7 flex items-start justify-between gap-4 border-t border-slate-100 pt-6">
+          <div>
+            <p className="eyebrow">Media checks</p>
+            <h2 className="mt-1 text-lg font-semibold tracking-tight text-slate-950">
+              File validation
+            </h2>
+          </div>
+          <span className="analysis-badge analysis-badge--code">
+            Deterministic
+          </span>
         </div>
         <div className="mt-6 space-y-3">
           {mediaResults.map((result, index) => (
@@ -639,6 +827,7 @@ function Report({
           ))}
         </div>
       </div>
+      <FixPackageSection report={report} onSeek={onSeek} />
       <CampaignSection report={report} onSeek={onSeek} />
       <VisualSection report={report} onSeek={onSeek} />
       <TranscriptSection
@@ -653,13 +842,19 @@ function Report({
   );
 }
 
-export function PreflightWorkspace() {
+export function PreflightWorkspace({
+  uploadConfig,
+}: {
+  uploadConfig: UploadConfig;
+}) {
   const [file, setFile] = useState<File | null>(null);
   const [target, setTarget] = useState<TargetPlatform>("tiktok");
   const [caption, setCaption] = useState("");
   const [brief, setBrief] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [processingStageIndex, setProcessingStageIndex] = useState(0);
+  const [demoLoaded, setDemoLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<PreflightReport | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -667,15 +862,28 @@ export function PreflightWorkspace() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const previewUrlRef = useRef<string | null>(null);
   const requestRef = useRef<AbortController | null>(null);
+  const submissionInFlightRef = useRef(false);
 
   useEffect(() => {
     return () => {
       if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+      requestRef.current?.abort();
     };
   }, []);
 
+  useEffect(() => {
+    if (!isAnalyzing) return;
+    const interval = window.setInterval(() => {
+      setProcessingStageIndex((current) =>
+        Math.min(current + 1, PROCESSING_STAGES.length - 1),
+      );
+    }, 1_600);
+    return () => window.clearInterval(interval);
+  }, [isAnalyzing]);
+
   function chooseFile(nextFile: File) {
-    const validationError = getFileError(nextFile);
+    if (isAnalyzing) return;
+    const validationError = getFileError(nextFile, uploadConfig);
     setError(validationError);
     if (validationError) return;
     if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
@@ -718,16 +926,18 @@ export function PreflightWorkspace() {
 
   async function runPreflight(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submissionInFlightRef.current || isAnalyzing) return;
     if (!file) {
       setError("Select an MP4 or MOV video before running preflight.");
       inputRef.current?.focus();
       return;
     }
 
-    requestRef.current?.abort();
     const controller = new AbortController();
+    submissionInFlightRef.current = true;
     requestRef.current = controller;
     setIsAnalyzing(true);
+    setProcessingStageIndex(0);
     setError(null);
     setReport(null);
 
@@ -763,10 +973,21 @@ export function PreflightWorkspace() {
       );
     } finally {
       if (requestRef.current === controller) {
+        submissionInFlightRef.current = false;
         setIsAnalyzing(false);
         requestRef.current = null;
       }
     }
+  }
+
+  function loadFocusFlowDemo() {
+    if (isAnalyzing) return;
+    setCaption(FOCUSFLOW_DEMO_CAPTION);
+    setBrief(FOCUSFLOW_DEMO_BRIEF);
+    setTarget("tiktok");
+    setDemoLoaded(true);
+    setReport(null);
+    setError(null);
   }
 
   return (
@@ -789,7 +1010,7 @@ export function PreflightWorkspace() {
               <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-50" />
               <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
             </span>
-            ffprobe ready
+            Portable media runtime
           </div>
         </div>
       </header>
@@ -879,11 +1100,14 @@ export function PreflightWorkspace() {
                       <p className="text-sm font-semibold text-slate-800">
                         Drop your video here or <span className="text-indigo-600">browse</span>
                       </p>
-                      <p className="mt-1.5 text-xs text-slate-400">MP4 or MOV · Up to 250 MB</p>
+                      <p className="mt-1.5 text-xs text-slate-400">
+                        MP4 or MOV · {uploadConfig.label}
+                      </p>
                     </div>
                   </>
                 )}
               </div>
+              <p className="upload-policy">{uploadConfig.label}</p>
             </div>
 
             <div className="workspace-section border-t border-slate-100">
@@ -927,12 +1151,34 @@ export function PreflightWorkspace() {
                     <p>Used for deterministic transcript and campaign checks.</p>
                 </div>
               </div>
+              <div className="demo-loader">
+                <div>
+                  <span>Built-in judging workflow</span>
+                  <p>Populate the synthetic FocusFlow brief and caption.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={loadFocusFlowDemo}
+                  disabled={isAnalyzing}
+                >
+                  {demoLoaded ? "FocusFlow demo loaded" : "Load FocusFlow demo"}
+                </button>
+              </div>
+              {demoLoaded && (
+                <p className="demo-note" role="status">
+                  Demo context loaded. Select the synthetic FocusFlow video manually;
+                  its output will run through the real pipeline.
+                </p>
+              )}
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="field-label">
                   <span>Caption</span>
                   <textarea
                     value={caption}
-                    onChange={(event) => setCaption(event.target.value)}
+                    onChange={(event) => {
+                      setCaption(event.target.value);
+                      setDemoLoaded(false);
+                    }}
                     placeholder="Paste your post caption…"
                     rows={4}
                     disabled={isAnalyzing}
@@ -942,7 +1188,10 @@ export function PreflightWorkspace() {
                   <span>Campaign brief</span>
                   <textarea
                     value={brief}
-                    onChange={(event) => setBrief(event.target.value)}
+                    onChange={(event) => {
+                      setBrief(event.target.value);
+                      setDemoLoaded(false);
+                    }}
                     placeholder="Key message, constraints, audience…"
                     rows={4}
                     disabled={isAnalyzing}
@@ -951,16 +1200,38 @@ export function PreflightWorkspace() {
               </div>
             </div>
 
+            {isAnalyzing && (
+              <div className="processing-panel" aria-live="polite">
+                <div className="processing-panel__heading">
+                  <span className="spinner spinner--dark" />
+                  <div>
+                    <strong>{PROCESSING_STAGES[processingStageIndex]}</strong>
+                    <p>Provider timing varies; exact percentages are not estimated.</p>
+                  </div>
+                </div>
+                <ol>
+                  {PROCESSING_STAGES.map((stage, index) => (
+                    <li
+                      className={index === processingStageIndex ? "is-active" : ""}
+                      key={stage}
+                    >
+                      {stage}
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
+
             <div className="flex flex-col gap-3 border-t border-slate-100 bg-slate-50/60 px-6 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-8">
               <p className="flex items-center gap-2 text-[11px] text-slate-400">
                 <span className="size-1.5 rounded-full bg-emerald-500" />
-                Processed locally · uploads are temporary
+                Temporary processing · no permanent storage
               </p>
               <button className="run-button" type="submit" disabled={isAnalyzing}>
                 {isAnalyzing ? (
                   <>
                     <span className="spinner" />
-                    Running media & content checks…
+                    {PROCESSING_STAGES[processingStageIndex]}…
                   </>
                 ) : (
                   <>
@@ -973,7 +1244,7 @@ export function PreflightWorkspace() {
           </form>
 
           <aside className="side-panel">
-            <p className="eyebrow">Phase 1 + 2 + 3</p>
+            <p className="eyebrow">Phase 1 + 2 + 3 + 4</p>
             <h2 className="mt-2 text-lg font-semibold tracking-tight text-slate-900">
               Evidence pipeline
             </h2>
