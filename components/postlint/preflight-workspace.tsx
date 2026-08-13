@@ -14,6 +14,8 @@ import type {
   LintSeverity,
   PreflightReport,
   TargetPlatform,
+  Transcript,
+  UnevaluatedRequirement,
 } from "@/lib/postlint/types";
 import {
   AlertIcon,
@@ -65,6 +67,13 @@ function formatDuration(seconds: number): string {
     : `${remaining.toFixed(1)}s`;
 }
 
+function formatTimestamp(seconds: number): string {
+  const rounded = Math.max(0, Math.round(seconds));
+  const minutes = Math.floor(rounded / 60);
+  const remainder = rounded % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
+}
+
 function severityDetails(severity: LintSeverity) {
   if (severity === "pass") {
     return { label: "Pass", icon: CheckIcon, color: "emerald" };
@@ -94,7 +103,34 @@ function LintCard({ result, index }: { result: LintResult; index: number }) {
           </span>
         </div>
         <h3 className="text-[15px] font-semibold text-slate-900">{result.title}</h3>
+        {result.timestampStart !== undefined && (
+          <p className="timestamp-pill">
+            {formatTimestamp(result.timestampStart)}
+            {result.timestampEnd !== undefined &&
+              `–${formatTimestamp(result.timestampEnd)}`}
+            <span>approx.</span>
+          </p>
+        )}
         <p className="mt-1 text-sm leading-6 text-slate-600">{result.message}</p>
+        {(result.expected || result.detected) && (
+          <div className="evidence-grid">
+            {result.expected && (
+              <div>
+                <span>Expected</span>
+                <strong>{result.expected}</strong>
+              </div>
+            )}
+            {result.detected && (
+              <div>
+                <span>Detected</span>
+                <strong>{result.detected}</strong>
+              </div>
+            )}
+          </div>
+        )}
+        {result.evidence && (
+          <blockquote className="evidence-quote">“{result.evidence}”</blockquote>
+        )}
         {result.suggestion && (
           <p className="mt-3 border-l-2 border-slate-200 pl-3 text-sm leading-5 text-slate-500">
             <span className="font-semibold text-slate-700">Suggested fix:</span>{" "}
@@ -103,6 +139,160 @@ function LintCard({ result, index }: { result: LintResult; index: number }) {
         )}
       </div>
     </article>
+  );
+}
+
+function UnevaluatedCard({
+  requirement,
+}: {
+  requirement: UnevaluatedRequirement;
+}) {
+  return (
+    <article className="lint-card lint-card--slate">
+      <div className="lint-icon lint-icon--slate">
+        <span className="font-mono text-xs font-bold">—</span>
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="mb-1.5 flex flex-wrap items-center gap-2">
+          <span className="severity severity--slate">Not evaluated</span>
+          <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-slate-400">
+            {requirement.requirementId}
+          </span>
+        </div>
+        <h3 className="text-[15px] font-semibold text-slate-900">
+          {requirement.description}
+        </h3>
+        <p className="mt-1 text-sm leading-6 text-slate-600">{requirement.reason}</p>
+      </div>
+    </article>
+  );
+}
+
+function TranscriptSection({
+  transcript,
+  status,
+}: {
+  transcript: Transcript | null;
+  status: PreflightReport["analysisStatus"]["transcription"];
+}) {
+  return (
+    <section className="report-subsection">
+      <div className="subsection-heading">
+        <div>
+          <p className="eyebrow">Transcript</p>
+          <h2>Timestamped speech</h2>
+        </div>
+        {status === "complete" && (
+          <span className="analysis-badge analysis-badge--complete">Gemini assisted</span>
+        )}
+      </div>
+
+      {status === "unavailable" && (
+        <div className="availability-note availability-note--warning">
+          <AlertIcon className="size-4 shrink-0" />
+          <div>
+            <strong>Transcript analysis unavailable</strong>
+            <p>The local media report was preserved. Campaign checks do not penalize missing provider output.</p>
+          </div>
+        </div>
+      )}
+
+      {status === "no_audio" && (
+        <div className="availability-note">
+          <SoundIcon className="size-4 shrink-0" />
+          <div>
+            <strong>No audio to transcribe</strong>
+            <p>Gemini was not called because ffprobe found no audio stream.</p>
+          </div>
+        </div>
+      )}
+
+      {status === "complete" && transcript && transcript.segments.length === 0 && (
+        <div className="availability-note">
+          <SoundIcon className="size-4 shrink-0" />
+          <div>
+            <strong>No intelligible speech detected</strong>
+            <p>The audio was analyzed, but no spoken transcript was returned.</p>
+          </div>
+        </div>
+      )}
+
+      {status === "complete" && transcript && transcript.segments.length > 0 && (
+        <div className="transcript-list">
+          {transcript.segments.map((segment, index) => (
+            <div className="transcript-segment" key={`${segment.startSeconds}-${index}`}>
+              <span>
+                {formatTimestamp(segment.startSeconds)}–{formatTimestamp(segment.endSeconds)}
+              </span>
+              <p>{segment.text}</p>
+            </div>
+          ))}
+          <p className="mt-4 text-[10px] leading-5 text-slate-400">
+            Timestamps are Gemini estimates, rounded to the nearest second—not forced alignment.
+          </p>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function CampaignSection({ report }: { report: PreflightReport }) {
+  if (report.analysisStatus.campaign === "not_requested") return null;
+
+  const campaignResults = report.lintResults.filter(
+    (result) => result.category === "campaign",
+  );
+  const passes = campaignResults.filter((result) => result.severity === "pass").length;
+  const failures = campaignResults.filter((result) => result.severity === "fail").length;
+
+  return (
+    <section className="report-subsection report-subsection--campaign">
+      <div className="subsection-heading campaign-heading">
+        <div>
+          <p className="eyebrow">Campaign preflight</p>
+          <h2>Brief requirements</h2>
+        </div>
+        {report.campaign && (
+          <div className="flex flex-wrap gap-2">
+            <span className="mini-count mini-count--pass">{passes} pass</span>
+            <span className="mini-count mini-count--fail">{failures} fail</span>
+            <span className="mini-count mini-count--neutral">
+              {report.campaign.unevaluatedCount} not evaluated
+            </span>
+          </div>
+        )}
+      </div>
+
+      {report.analysisStatus.campaign === "unavailable" && (
+        <div className="availability-note availability-note--warning">
+          <AlertIcon className="size-4 shrink-0" />
+          <div>
+            <strong>Campaign analysis unavailable</strong>
+            <p>The media report and transcript remain available. No campaign result was fabricated.</p>
+          </div>
+        </div>
+      )}
+
+      {report.campaign && (
+        <>
+          <div className="brief-preview">
+            <span>Interpreted brief</span>
+            <p>{report.campaign.rawBrief}</p>
+          </div>
+          <div className="mt-5 space-y-3">
+            {campaignResults.map((result, index) => (
+              <LintCard key={result.id} result={result} index={index + 4} />
+            ))}
+            {report.unevaluatedRequirements.map((requirement) => (
+              <UnevaluatedCard
+                key={requirement.requirementId}
+                requirement={requirement}
+              />
+            ))}
+          </div>
+        </>
+      )}
+    </section>
   );
 }
 
@@ -115,6 +305,9 @@ function Report({ report }: { report: PreflightReport }) {
     : hasWarnings
       ? "Review recommended"
       : "Preflight passed";
+  const mediaResults = report.lintResults.filter(
+    (result) => result.category === "media",
+  );
 
   const metadata = [
     {
@@ -157,7 +350,7 @@ function Report({ report }: { report: PreflightReport }) {
                 {targetName}
               </span>
             </div>
-            <p className="mt-0.5 text-xs text-slate-500">Local media analysis complete</p>
+            <p className="mt-0.5 text-xs text-slate-500">Media and content preflight complete</p>
           </div>
         </div>
         <span
@@ -206,18 +399,34 @@ function Report({ report }: { report: PreflightReport }) {
               <XIcon className="size-3.5" />
               <strong>{report.summary.failures}</strong> fail
             </div>
+            {report.unevaluatedRequirements.length > 0 && (
+              <div className="summary-chip summary-chip--neutral">
+                <strong>{report.unevaluatedRequirements.length}</strong> not evaluated
+              </div>
+            )}
           </div>
         </div>
 
+        <div className="mt-7 border-t border-slate-100 pt-6">
+          <p className="eyebrow">Media checks</p>
+          <h2 className="mt-1 text-lg font-semibold tracking-tight text-slate-950">
+            Local file validation
+          </h2>
+        </div>
         <div className="mt-6 space-y-3">
-          {report.lintResults.map((result, index) => (
+          {mediaResults.map((result, index) => (
             <LintCard key={result.id} result={result} index={index} />
           ))}
         </div>
-        <p className="mt-5 text-center text-[11px] leading-5 text-slate-400">
-          Results use PostLint MVP target checks—not universal platform requirements.
-        </p>
       </div>
+      <TranscriptSection
+        transcript={report.transcript}
+        status={report.analysisStatus.transcription}
+      />
+      <CampaignSection report={report} />
+      <p className="border-t border-slate-100 px-6 py-5 text-center text-[11px] leading-5 text-slate-400">
+        Results use PostLint MVP target checks—not universal platform or legal requirements.
+      </p>
     </section>
   );
 }
@@ -462,7 +671,7 @@ export function PreflightWorkspace() {
                 <span className="step-number">03</span>
                 <div>
                   <h2>Add context <span className="font-normal text-slate-400">(optional)</span></h2>
-                  <p>Saved for future content checks; not analyzed in Phase 1.</p>
+                    <p>Used for deterministic transcript and campaign checks.</p>
                 </div>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
@@ -498,7 +707,7 @@ export function PreflightWorkspace() {
                 {isAnalyzing ? (
                   <>
                     <span className="spinner" />
-                    Inspecting media…
+                    Running media & content checks…
                   </>
                 ) : (
                   <>
@@ -511,12 +720,12 @@ export function PreflightWorkspace() {
           </form>
 
           <aside className="side-panel">
-            <p className="eyebrow">Phase 1 checks</p>
+            <p className="eyebrow">Phase 1 + 2 checks</p>
             <h2 className="mt-2 text-lg font-semibold tracking-tight text-slate-900">
-              Media fundamentals
+              Evidence pipeline
             </h2>
             <p className="mt-2 text-sm leading-6 text-slate-500">
-              PostLint reads the uploaded file with ffprobe and evaluates four deterministic rules.
+              PostLint inspects real media, transcribes speech, interprets the brief, then verifies objective requirements in code.
             </p>
             <ol className="checklist">
               {[
@@ -524,6 +733,8 @@ export function PreflightWorkspace() {
                 ["Resolution", "Quality baseline"],
                 ["Duration", "90-second MVP limit"],
                 ["Audio", "Stream presence"],
+                ["Transcript", "Timestamped speech"],
+                ["Campaign", "Deterministic compliance"],
               ].map(([title, description], index) => (
                 <li key={title}>
                   <span>{String(index + 1).padStart(2, "0")}</span>
@@ -539,7 +750,7 @@ export function PreflightWorkspace() {
                 Built for proof
               </p>
               <p className="mt-2 text-xs leading-5 text-indigo-950/70">
-                Every result below is generated from real video stream metadata—never mocked output.
+                AI interprets ambiguous input. Deterministic code decides what passes or fails.
               </p>
             </div>
           </aside>
