@@ -30,6 +30,8 @@ function dependencies(
     extractAudio: async () => undefined,
     transcribe: async () => transcript,
     parseBrief: async () => parsedRequirements,
+    extractFrames: async () => [],
+    analyzeVisual: async () => [],
     ...overrides,
   };
 }
@@ -40,6 +42,8 @@ const input = {
   audioPresent: true,
   caption: "",
   rawBrief: "Mention FocusFlow",
+  framesDirectory: "/tmp/frames",
+  durationSeconds: 10,
 };
 
 describe("partial provider failure", () => {
@@ -101,5 +105,28 @@ describe("partial provider failure", () => {
     assert.equal(output.analysisStatus.campaign, "not_requested");
     assert.equal(parserCalled, false);
     assert.equal(output.transcript?.segments.length, 1);
+  });
+
+  it("preserves Phase 2 results when visual analysis fails", async () => {
+    const visualRequirement: CampaignRequirement = {
+      id: "campaign-002",
+      type: "visual_requirement",
+      description: "Show the FocusFlow product",
+    };
+    const output = await analyzeContent(
+      input,
+      dependencies({
+        parseBrief: async () => [...parsedRequirements, visualRequirement],
+        extractFrames: async () => [
+          { path: "/tmp/frame.jpg", timestampSeconds: 3 },
+        ],
+        analyzeVisual: async () => Promise.reject(new Error("provider")),
+      }),
+    );
+    assert.equal(output.analysisStatus.transcription, "complete");
+    assert.equal(output.analysisStatus.campaign, "complete");
+    assert.equal(output.analysisStatus.visual, "unavailable");
+    assert.equal(output.campaignLintResults[0].severity, "pass");
+    assert.equal(output.unevaluatedRequirements[0].requirementId, "campaign-002");
   });
 });

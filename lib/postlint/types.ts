@@ -67,9 +67,49 @@ export type CampaignAnalysis = {
   unevaluatedCount: number;
 };
 
+export type VideoFrame = {
+  path: string;
+  timestampSeconds: number;
+};
+
+export type VisualConfidence = "high" | "medium" | "low";
+
+export type VisualRequirementEvaluation = {
+  requirementId: string;
+  status: "verified" | "not_verified" | "uncertain";
+  evidence?: string;
+  startSeconds?: number;
+  endSeconds?: number;
+  confidence: VisualConfidence;
+};
+
+export type VisualCheckResult = {
+  id: string;
+  requirementId: string;
+  status: "pass" | "needs_review" | "not_verified";
+  title: string;
+  message: string;
+  evidence?: string;
+  timestampStart?: number;
+  timestampEnd?: number;
+  confidence?: VisualConfidence;
+  suggestion?: string;
+};
+
+export type VisualAnalysis = {
+  sampledFrameCount: number;
+  supportedRequirementCount: number;
+  checks: VisualCheckResult[];
+};
+
 export type AnalysisStatus = {
   transcription: "complete" | "unavailable" | "no_audio";
   campaign: "complete" | "unavailable" | "not_requested";
+  visual:
+    | "complete"
+    | "unavailable"
+    | "not_requested"
+    | "no_supported_requirements";
 };
 
 export type TargetPlatform = "tiktok" | "instagram" | "youtube";
@@ -99,6 +139,7 @@ export type PreflightReport = {
   metadata: MediaMetadata;
   transcript: Transcript | null;
   campaign: CampaignAnalysis | null;
+  visualAnalysis: VisualAnalysis | null;
   lintResults: LintResult[];
   unevaluatedRequirements: UnevaluatedRequirement[];
   analysisStatus: AnalysisStatus;

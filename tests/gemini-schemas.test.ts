@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   validateCampaignResponse,
   validateTranscriptResponse,
+  validateVisualResponse,
 } from "../lib/postlint/ai/schemas";
 
 describe("Gemini transcript response validation", () => {
@@ -38,6 +39,42 @@ describe("Gemini transcript response validation", () => {
     assert.throws(() =>
       validateTranscriptResponse(
         '{"text":"Two one","segments":[{"startSeconds":4,"endSeconds":5,"text":"Two"},{"startSeconds":1,"endSeconds":2,"text":"One"}]}',
+      ),
+    );
+  });
+});
+
+describe("Gemini visual response validation", () => {
+  it("accepts a valid structured visual evaluation", () => {
+    const evaluations = validateVisualResponse(
+      JSON.stringify({
+        evaluations: [
+          {
+            requirementId: "campaign-007",
+            status: "verified",
+            evidence: "FocusFlow interface visible.",
+            startSeconds: 3,
+            endSeconds: 6,
+            confidence: "high",
+          },
+        ],
+      }),
+    );
+    assert.equal(evaluations[0].status, "verified");
+  });
+
+  it("rejects malformed visual output", () => {
+    assert.throws(() =>
+      validateVisualResponse(
+        '{"evaluations":[{"requirementId":"campaign-007","status":"yes"}]}',
+      ),
+    );
+  });
+
+  it("rejects reversed visual timestamps", () => {
+    assert.throws(() =>
+      validateVisualResponse(
+        '{"evaluations":[{"requirementId":"campaign-007","status":"verified","confidence":"high","startSeconds":6,"endSeconds":3}]}',
       ),
     );
   });

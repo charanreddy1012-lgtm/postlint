@@ -3,6 +3,7 @@ import { z } from "zod";
 import type {
   CampaignRequirement,
   Transcript,
+  VisualRequirementEvaluation,
 } from "@/lib/postlint/types";
 
 const transcriptSegmentSchema = z
@@ -66,6 +67,30 @@ export const campaignResponseSchema = z
   })
   .strict();
 
+const visualEvaluationSchema = z
+  .object({
+    requirementId: z.string().trim().min(1).max(200),
+    status: z.enum(["verified", "not_verified", "uncertain"]),
+    evidence: z.string().trim().min(1).max(1_000).optional(),
+    startSeconds: z.number().finite().nonnegative().optional(),
+    endSeconds: z.number().finite().nonnegative().optional(),
+    confidence: z.enum(["high", "medium", "low"]),
+  })
+  .strict()
+  .refine(
+    (evaluation) =>
+      evaluation.startSeconds === undefined ||
+      evaluation.endSeconds === undefined ||
+      evaluation.endSeconds >= evaluation.startSeconds,
+    { message: "Visual evidence end must not precede its start." },
+  );
+
+export const visualResponseSchema = z
+  .object({
+    evaluations: z.array(visualEvaluationSchema).max(100),
+  })
+  .strict();
+
 export const TRANSCRIPT_JSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -119,6 +144,36 @@ export const CAMPAIGN_JSON_SCHEMA = {
   },
 } as const;
 
+export const VISUAL_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["evaluations"],
+  properties: {
+    evaluations: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["requirementId", "status", "confidence"],
+        properties: {
+          requirementId: { type: "string" },
+          status: {
+            type: "string",
+            enum: ["verified", "not_verified", "uncertain"],
+          },
+          evidence: { type: "string" },
+          startSeconds: { type: "number", minimum: 0 },
+          endSeconds: { type: "number", minimum: 0 },
+          confidence: {
+            type: "string",
+            enum: ["high", "medium", "low"],
+          },
+        },
+      },
+    },
+  },
+} as const;
+
 function parseJson(raw: string): unknown {
   try {
     return JSON.parse(raw);
@@ -137,4 +192,10 @@ export function validateCampaignResponse(raw: string): CampaignRequirement[] {
     ...requirement,
     id: `campaign-${String(index + 1).padStart(3, "0")}`,
   }));
+}
+
+export function validateVisualResponse(
+  raw: string,
+): VisualRequirementEvaluation[] {
+  return visualResponseSchema.parse(parseJson(raw)).evaluations;
 }

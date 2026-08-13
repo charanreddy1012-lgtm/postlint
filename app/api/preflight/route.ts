@@ -2,9 +2,14 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
 
-import { parseCampaignBrief, transcribeAudio } from "@/lib/postlint/ai/gemini";
+import {
+  analyzeVisualFrames,
+  parseCampaignBrief,
+  transcribeAudio,
+} from "@/lib/postlint/ai/gemini";
 import { MediaProbeError, probeMedia } from "@/lib/postlint/media/ffprobe";
 import { extractSpeechAudio } from "@/lib/postlint/media/audio";
+import { extractVideoFrames } from "@/lib/postlint/media/frames";
 import {
   runMediaLints,
   summarizeLints,
@@ -99,16 +104,21 @@ export async function POST(request: Request): Promise<Response> {
         audioPresent: metadata.audioPresent,
         caption,
         rawBrief,
+        framesDirectory: join(temporaryDirectory, "frames"),
+        durationSeconds: metadata.durationSeconds,
       },
       {
         extractAudio: extractSpeechAudio,
         transcribe: transcribeAudio,
         parseBrief: parseCampaignBrief,
+        extractFrames: extractVideoFrames,
+        analyzeVisual: analyzeVisualFrames,
       },
     );
     const lintResults = [
       ...mediaLintResults,
       ...contentAnalysis.campaignLintResults,
+      ...contentAnalysis.visualLintResults,
     ];
     const report: PreflightReport = {
       filename: upload.name,
@@ -116,6 +126,7 @@ export async function POST(request: Request): Promise<Response> {
       metadata,
       transcript: contentAnalysis.transcript,
       campaign: contentAnalysis.campaign,
+      visualAnalysis: contentAnalysis.visualAnalysis,
       lintResults,
       unevaluatedRequirements: contentAnalysis.unevaluatedRequirements,
       analysisStatus: contentAnalysis.analysisStatus,

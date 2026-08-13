@@ -4,6 +4,8 @@ import {
   type ChangeEvent,
   type DragEvent,
   type FormEvent,
+  type RefObject,
+  useEffect,
   useRef,
   useState,
 } from "react";
@@ -16,6 +18,7 @@ import type {
   TargetPlatform,
   Transcript,
   UnevaluatedRequirement,
+  VisualCheckResult,
 } from "@/lib/postlint/types";
 import {
   AlertIcon,
@@ -84,7 +87,15 @@ function severityDetails(severity: LintSeverity) {
   return { label: "Fail", icon: XIcon, color: "red" };
 }
 
-function LintCard({ result, index }: { result: LintResult; index: number }) {
+function LintCard({
+  result,
+  index,
+  onSeek,
+}: {
+  result: LintResult;
+  index: number;
+  onSeek: (seconds: number) => void;
+}) {
   const details = severityDetails(result.severity);
   const Icon = details.icon;
 
@@ -104,12 +115,17 @@ function LintCard({ result, index }: { result: LintResult; index: number }) {
         </div>
         <h3 className="text-[15px] font-semibold text-slate-900">{result.title}</h3>
         {result.timestampStart !== undefined && (
-          <p className="timestamp-pill">
+          <button
+            className="timestamp-pill timestamp-button"
+            type="button"
+            onClick={() => onSeek(result.timestampStart!)}
+            aria-label={`Seek video to ${formatTimestamp(result.timestampStart)}`}
+          >
             {formatTimestamp(result.timestampStart)}
             {result.timestampEnd !== undefined &&
               `–${formatTimestamp(result.timestampEnd)}`}
             <span>approx.</span>
-          </p>
+          </button>
         )}
         <p className="mt-1 text-sm leading-6 text-slate-600">{result.message}</p>
         {(result.expected || result.detected) && (
@@ -135,6 +151,67 @@ function LintCard({ result, index }: { result: LintResult; index: number }) {
           <p className="mt-3 border-l-2 border-slate-200 pl-3 text-sm leading-5 text-slate-500">
             <span className="font-semibold text-slate-700">Suggested fix:</span>{" "}
             {result.suggestion}
+          </p>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function VisualCheckCard({
+  check,
+  index,
+  onSeek,
+}: {
+  check: VisualCheckResult;
+  index: number;
+  onSeek: (seconds: number) => void;
+}) {
+  const state =
+    check.status === "pass"
+      ? { color: "emerald", label: "Pass · Visual", icon: CheckIcon }
+      : check.status === "needs_review"
+        ? { color: "violet", label: "Needs review · Visual", icon: AlertIcon }
+        : { color: "slate", label: "Not verified · Visual", icon: XIcon };
+  const Icon = state.icon;
+
+  return (
+    <article className={`lint-card lint-card--${state.color}`}>
+      <div className={`lint-icon lint-icon--${state.color}`}>
+        <Icon className="size-4" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="mb-1.5 flex flex-wrap items-center gap-2">
+          <span className={`severity severity--${state.color}`}>{state.label}</span>
+          <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-slate-400">
+            PL-{String(index + 1).padStart(3, "0")}
+          </span>
+          {check.confidence && (
+            <span className="confidence-label">{check.confidence} confidence</span>
+          )}
+        </div>
+        <h3 className="text-[15px] font-semibold text-slate-900">{check.title}</h3>
+        {check.timestampStart !== undefined && (
+          <button
+            className="timestamp-pill timestamp-button"
+            type="button"
+            onClick={() => onSeek(check.timestampStart!)}
+            aria-label={`Seek video to ${formatTimestamp(check.timestampStart)}`}
+          >
+            {formatTimestamp(check.timestampStart)}
+            {check.timestampEnd !== undefined &&
+              `–${formatTimestamp(check.timestampEnd)}`}
+            <span>sampled frame</span>
+          </button>
+        )}
+        <p className="mt-1 text-sm leading-6 text-slate-600">{check.message}</p>
+        {check.evidence && (
+          <blockquote className="evidence-quote">“{check.evidence}”</blockquote>
+        )}
+        {check.suggestion && (
+          <p className="mt-3 border-l-2 border-slate-200 pl-3 text-sm leading-5 text-slate-500">
+            <span className="font-semibold text-slate-700">Suggested fix:</span>{" "}
+            {check.suggestion}
           </p>
         )}
       </div>
@@ -171,9 +248,11 @@ function UnevaluatedCard({
 function TranscriptSection({
   transcript,
   status,
+  onSeek,
 }: {
   transcript: Transcript | null;
   status: PreflightReport["analysisStatus"]["transcription"];
+  onSeek: (seconds: number) => void;
 }) {
   return (
     <section className="report-subsection">
@@ -221,9 +300,13 @@ function TranscriptSection({
         <div className="transcript-list">
           {transcript.segments.map((segment, index) => (
             <div className="transcript-segment" key={`${segment.startSeconds}-${index}`}>
-              <span>
+              <button
+                type="button"
+                onClick={() => onSeek(segment.startSeconds)}
+                aria-label={`Seek video to transcript at ${formatTimestamp(segment.startSeconds)}`}
+              >
                 {formatTimestamp(segment.startSeconds)}–{formatTimestamp(segment.endSeconds)}
-              </span>
+              </button>
               <p>{segment.text}</p>
             </div>
           ))}
@@ -236,7 +319,13 @@ function TranscriptSection({
   );
 }
 
-function CampaignSection({ report }: { report: PreflightReport }) {
+function CampaignSection({
+  report,
+  onSeek,
+}: {
+  report: PreflightReport;
+  onSeek: (seconds: number) => void;
+}) {
   if (report.analysisStatus.campaign === "not_requested") return null;
 
   const campaignResults = report.lintResults.filter(
@@ -244,6 +333,9 @@ function CampaignSection({ report }: { report: PreflightReport }) {
   );
   const passes = campaignResults.filter((result) => result.severity === "pass").length;
   const failures = campaignResults.filter((result) => result.severity === "fail").length;
+  const campaignUnevaluated = report.unevaluatedRequirements.filter(
+    (requirement) => requirement.type !== "visual_requirement",
+  );
 
   return (
     <section className="report-subsection report-subsection--campaign">
@@ -257,7 +349,7 @@ function CampaignSection({ report }: { report: PreflightReport }) {
             <span className="mini-count mini-count--pass">{passes} pass</span>
             <span className="mini-count mini-count--fail">{failures} fail</span>
             <span className="mini-count mini-count--neutral">
-              {report.campaign.unevaluatedCount} not evaluated
+              {campaignUnevaluated.length} not evaluated
             </span>
           </div>
         )}
@@ -281,9 +373,14 @@ function CampaignSection({ report }: { report: PreflightReport }) {
           </div>
           <div className="mt-5 space-y-3">
             {campaignResults.map((result, index) => (
-              <LintCard key={result.id} result={result} index={index + 4} />
+              <LintCard
+                key={result.id}
+                result={result}
+                index={index + 4}
+                onSeek={onSeek}
+              />
             ))}
-            {report.unevaluatedRequirements.map((requirement) => (
+            {campaignUnevaluated.map((requirement) => (
               <UnevaluatedCard
                 key={requirement.requirementId}
                 requirement={requirement}
@@ -296,7 +393,119 @@ function CampaignSection({ report }: { report: PreflightReport }) {
   );
 }
 
-function Report({ report }: { report: PreflightReport }) {
+function VisualSection({
+  report,
+  onSeek,
+}: {
+  report: PreflightReport;
+  onSeek: (seconds: number) => void;
+}) {
+  const visualUnevaluated = report.unevaluatedRequirements.filter(
+    (requirement) => requirement.type === "visual_requirement",
+  );
+  const checks = report.visualAnalysis?.checks ?? [];
+  const wasRequested =
+    checks.length > 0 ||
+    visualUnevaluated.length > 0 ||
+    report.analysisStatus.visual === "unavailable";
+  if (!wasRequested) return null;
+
+  const passes = checks.filter((check) => check.status === "pass").length;
+  const reviews = checks.filter((check) => check.status !== "pass").length;
+
+  return (
+    <section className="report-subsection report-subsection--visual">
+      <div className="subsection-heading campaign-heading">
+        <div>
+          <p className="eyebrow">Visual checks</p>
+          <h2>Observed frame evidence</h2>
+        </div>
+        {report.visualAnalysis && (
+          <div className="flex flex-wrap gap-2">
+            <span className="mini-count mini-count--pass">{passes} pass</span>
+            <span className="mini-count mini-count--neutral">{reviews} review</span>
+            <span className="mini-count mini-count--visual">
+              {report.visualAnalysis.sampledFrameCount} frames
+            </span>
+          </div>
+        )}
+      </div>
+
+      <p className="visual-method-note">
+        AI-observed from representative frames. Only high-confidence visible evidence can pass automatically.
+      </p>
+
+      {report.analysisStatus.visual === "unavailable" && (
+        <div className="availability-note availability-note--warning mt-4">
+          <AlertIcon className="size-4 shrink-0" />
+          <div>
+            <strong>Visual analysis unavailable</strong>
+            <p>Media, transcript, and deterministic campaign results were preserved.</p>
+          </div>
+        </div>
+      )}
+
+      <div className="mt-5 space-y-3">
+        {checks.map((check, index) => (
+          <VisualCheckCard
+            key={check.id}
+            check={check}
+            index={report.lintResults.filter((result) => result.category !== "visual").length + index}
+            onSeek={onSeek}
+          />
+        ))}
+        {visualUnevaluated.map((requirement) => (
+          <UnevaluatedCard
+            key={requirement.requirementId}
+            requirement={requirement}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function VideoPreview({
+  previewUrl,
+  videoRef,
+}: {
+  previewUrl: string;
+  videoRef: RefObject<HTMLVideoElement | null>;
+}) {
+  return (
+    <section className="video-preview-section" id="video-preview">
+      <div>
+        <p className="eyebrow text-slate-300">Video preview</p>
+        <h2>Inspect every finding in context</h2>
+        <p>Click any timestamp in the report to jump to that moment.</p>
+      </div>
+      <div className="video-stage">
+        <video
+          ref={videoRef}
+          src={previewUrl}
+          controls
+          playsInline
+          preload="metadata"
+          tabIndex={-1}
+        >
+          Your browser cannot preview this video format.
+        </video>
+      </div>
+    </section>
+  );
+}
+
+function Report({
+  report,
+  previewUrl,
+  videoRef,
+  onSeek,
+}: {
+  report: PreflightReport;
+  previewUrl: string;
+  videoRef: RefObject<HTMLVideoElement | null>;
+  onSeek: (seconds: number) => void;
+}) {
   const targetName = targets.find((target) => target.id === report.target)?.name;
   const hasFailures = report.summary.failures > 0;
   const hasWarnings = report.summary.warnings > 0;
@@ -308,6 +517,10 @@ function Report({ report }: { report: PreflightReport }) {
   const mediaResults = report.lintResults.filter(
     (result) => result.category === "media",
   );
+  const visualReviewCount =
+    report.visualAnalysis?.checks.filter((check) => check.status !== "pass").length ?? 0;
+  const nonScoringCount = report.unevaluatedRequirements.length + visualReviewCount;
+  const completedCheckCount = report.lintResults.length + nonScoringCount;
 
   const metadata = [
     {
@@ -378,12 +591,14 @@ function Report({ report }: { report: PreflightReport }) {
         })}
       </div>
 
+      <VideoPreview previewUrl={previewUrl} videoRef={videoRef} />
+
       <div className="report-body">
         <div className="summary-strip">
           <div>
             <p className="eyebrow">Lint summary</p>
             <h2 className="mt-1 text-xl font-semibold tracking-tight text-slate-950">
-              {report.lintResults.length} checks completed
+              {completedCheckCount} requirements checked
             </h2>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -399,9 +614,9 @@ function Report({ report }: { report: PreflightReport }) {
               <XIcon className="size-3.5" />
               <strong>{report.summary.failures}</strong> fail
             </div>
-            {report.unevaluatedRequirements.length > 0 && (
+            {nonScoringCount > 0 && (
               <div className="summary-chip summary-chip--neutral">
-                <strong>{report.unevaluatedRequirements.length}</strong> not evaluated
+                <strong>{nonScoringCount}</strong> review / not evaluated
               </div>
             )}
           </div>
@@ -415,15 +630,22 @@ function Report({ report }: { report: PreflightReport }) {
         </div>
         <div className="mt-6 space-y-3">
           {mediaResults.map((result, index) => (
-            <LintCard key={result.id} result={result} index={index} />
+            <LintCard
+              key={result.id}
+              result={result}
+              index={index}
+              onSeek={onSeek}
+            />
           ))}
         </div>
       </div>
+      <CampaignSection report={report} onSeek={onSeek} />
+      <VisualSection report={report} onSeek={onSeek} />
       <TranscriptSection
         transcript={report.transcript}
         status={report.analysisStatus.transcription}
+        onSeek={onSeek}
       />
-      <CampaignSection report={report} />
       <p className="border-t border-slate-100 px-6 py-5 text-center text-[11px] leading-5 text-slate-400">
         Results use PostLint MVP target checks—not universal platform or legal requirements.
       </p>
@@ -440,15 +662,46 @@ export function PreflightWorkspace() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<PreflightReport | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const previewUrlRef = useRef<string | null>(null);
   const requestRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+    };
+  }, []);
 
   function chooseFile(nextFile: File) {
     const validationError = getFileError(nextFile);
     setError(validationError);
     if (validationError) return;
+    if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+    const nextPreviewUrl = URL.createObjectURL(nextFile);
+    previewUrlRef.current = nextPreviewUrl;
+    setPreviewUrl(nextPreviewUrl);
     setFile(nextFile);
     setReport(null);
+  }
+
+  function seekVideo(timestampSeconds: number) {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const seek = () => {
+      const maximum = Number.isFinite(video.duration)
+        ? Math.max(0, video.duration - 0.05)
+        : timestampSeconds;
+      video.currentTime = Math.min(Math.max(0, timestampSeconds), maximum);
+      void video.play().catch(() => undefined);
+    };
+
+    if (video.readyState === 0) video.addEventListener("loadedmetadata", seek, { once: true });
+    else seek();
+    video.scrollIntoView({ behavior: "smooth", block: "center" });
+    video.focus({ preventScroll: true });
   }
 
   function handleFileInput(event: ChangeEvent<HTMLInputElement>) {
@@ -550,8 +803,8 @@ export function PreflightWorkspace() {
             <span className="text-slate-400">before you publish.</span>
           </h1>
           <p className="mt-5 max-w-xl text-[15px] leading-7 text-slate-500">
-            Upload a draft and run deterministic media checks against PostLint’s
-            short-form targets. Real metadata, clear findings, no guesswork.
+            Upload a draft and connect real media metadata, timestamped speech,
+            campaign rules, and sampled visual evidence in one inspectable report.
           </p>
         </div>
 
@@ -720,7 +973,7 @@ export function PreflightWorkspace() {
           </form>
 
           <aside className="side-panel">
-            <p className="eyebrow">Phase 1 + 2 checks</p>
+            <p className="eyebrow">Phase 1 + 2 + 3</p>
             <h2 className="mt-2 text-lg font-semibold tracking-tight text-slate-900">
               Evidence pipeline
             </h2>
@@ -735,6 +988,7 @@ export function PreflightWorkspace() {
                 ["Audio", "Stream presence"],
                 ["Transcript", "Timestamped speech"],
                 ["Campaign", "Deterministic compliance"],
+                ["Visual", "Conservative frame evidence"],
               ].map(([title, description], index) => (
                 <li key={title}>
                   <span>{String(index + 1).padStart(2, "0")}</span>
@@ -750,7 +1004,7 @@ export function PreflightWorkspace() {
                 Built for proof
               </p>
               <p className="mt-2 text-xs leading-5 text-indigo-950/70">
-                AI interprets ambiguous input. Deterministic code decides what passes or fails.
+                AI interprets and observes. Deterministic gates decide what is safe to pass.
               </p>
             </div>
           </aside>
@@ -766,7 +1020,14 @@ export function PreflightWorkspace() {
           </div>
         )}
 
-        {report && <Report report={report} />}
+        {report && previewUrl && (
+          <Report
+            report={report}
+            previewUrl={previewUrl}
+            videoRef={videoRef}
+            onSeek={seekVideo}
+          />
+        )}
       </div>
     </main>
   );

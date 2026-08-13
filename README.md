@@ -1,6 +1,6 @@
 # PostLint
 
-PostLint is pre-publication QA for short-form social video—“ESLint for social media.” It combines real local media inspection, Gemini-assisted interpretation, and deterministic compliance checks in one inspectable report.
+PostLint is pre-publication QA for short-form social video—“ESLint for social media.” It combines real local media inspection, Gemini-assisted interpretation and observation, and deterministic compliance checks in one inspectable report.
 
 > **Design principle:** AI interprets; deterministic code verifies.
 
@@ -29,7 +29,27 @@ Gemini does **not** decide whether the post complies. Deterministic application 
 - Explicit prohibited phrases
 - Calls to action
 
-Visual and unsupported requirements are preserved as **Not evaluated**. They never become fabricated passes and do not count as warnings or failures. Provider failures also preserve successful local media results.
+Phase 2 preserves visual and unsupported requirements as **Not evaluated** rather than fabricating passes. Phase 3 upgrades only concrete, supported visual requirements to conservative frame analysis. Provider failures preserve successful local media results throughout the pipeline.
+
+## Phase 3: conservative visual evidence
+
+PostLint samples representative frames across the full video with local `ffmpeg`—approximately every three seconds, capped at 16 JPEGs. One batched Gemini request inspects those frames against supported visual requirements such as:
+
+- Show a product or identifiable item
+- Display a logo or packaging
+- Make a product interface or app screen visible
+- Show a creator holding an item
+- Display specific visible brand text when it is reasonably clear
+
+Only high-confidence `verified` observations with explicit evidence and an exact sampled-frame timestamp become **PASS · Visual**. Medium/low confidence, ambiguous identification, missing evidence, unsupported subjective direction, and no clear sampled evidence remain non-scoring **Needs review**, **Not verified**, or **Not evaluated** states.
+
+The report uses a browser-side object URL to preview the selected upload without permanent storage. Clicking a lint or transcript timestamp seeks the single HTML5 video player to that moment. Old preview URLs are revoked when the file changes or the page unmounts.
+
+For a preflight with audio and a brief containing supported visual requirements, the normal Gemini budget is three batched calls:
+
+1. Timestamped transcription
+2. Campaign brief interpretation
+3. Visual observation across all sampled frames and supported requirements
 
 ## Run locally
 
@@ -54,7 +74,7 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000), upload an MP4 or MOV file (up to 250 MB), choose a target, optionally add a caption and campaign brief, and run preflight.
 
-Uploads, extracted audio, and other analysis artifacts are temporary and removed after every request, including failures. `.env.local` is ignored by Git; the API key is read only in server code.
+Uploads, extracted audio, sampled frames, and other analysis artifacts are temporary and removed after every request, including failures. `.env.local` is ignored by Git; the API key is read only in server code.
 
 ## Verification
 
@@ -70,4 +90,4 @@ Tests mock the provider boundary and never call Gemini. If Turbopack cannot crea
 npx next build --webpack
 ```
 
-PostLint checks are product targets, not universal platform rules or guarantees of legal compliance. Gemini-generated timestamps are approximate and displayed at whole-second precision.
+PostLint checks are product targets, not universal platform rules or guarantees of legal compliance. Gemini-generated transcript timestamps are approximate and displayed at whole-second precision. Visual analysis sees representative sampled frames rather than every video frame, so absence from samples is not treated as definitive failure.
