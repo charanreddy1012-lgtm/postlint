@@ -31,7 +31,7 @@ function dependencies(
     transcribe: async () => transcript,
     parseBrief: async () => parsedRequirements,
     extractFrames: async () => [],
-    analyzeVisual: async () => [],
+    analyzeVisual: async () => ({ evaluations: [], detectedElements: [] }),
     ...overrides,
   };
 }
@@ -44,6 +44,7 @@ const input = {
   rawBrief: "Mention FocusFlow",
   framesDirectory: "/tmp/frames",
   durationSeconds: 10,
+  target: "tiktok" as const,
 };
 
 describe("partial provider failure", () => {
@@ -128,5 +129,48 @@ describe("partial provider failure", () => {
     assert.equal(output.analysisStatus.visual, "unavailable");
     assert.equal(output.campaignLintResults[0].severity, "pass");
     assert.equal(output.unevaluatedRequirements[0].requirementId, "campaign-002");
+  });
+
+  it("derives platform warnings from boxes in the existing visual batch", async () => {
+    let visualCalls = 0;
+    const visualRequirement: CampaignRequirement = {
+      id: "campaign-002",
+      type: "visual_requirement",
+      description: "Show the FocusFlow product",
+    };
+    const output = await analyzeContent(
+      input,
+      dependencies({
+        parseBrief: async () => [...parsedRequirements, visualRequirement],
+        extractFrames: async () => [
+          { path: "/tmp/frame.jpg", timestampSeconds: 3 },
+        ],
+        analyzeVisual: async () => {
+          visualCalls += 1;
+          return {
+            evaluations: [
+              {
+                requirementId: visualRequirement.id,
+                status: "not_verified",
+                confidence: "high",
+              },
+            ],
+            detectedElements: [
+              {
+                frameTimestampSeconds: 3,
+                kind: "cta",
+                text: "Try FocusFlow",
+                box2d: [300, 800, 450, 970],
+                confidence: "high",
+              },
+            ],
+          };
+        },
+      }),
+    );
+
+    assert.equal(visualCalls, 1);
+    assert.equal(output.platformLintResults.length, 1);
+    assert.equal(output.platformLintResults[0].severity, "warning");
   });
 });

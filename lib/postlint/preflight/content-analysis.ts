@@ -1,4 +1,5 @@
 import { runCampaignLints } from "@/lib/postlint/campaign/campaign-lints";
+import { runSafeZoneLints } from "@/lib/postlint/platform/safe-zone-lints";
 import { partitionVisualRequirements } from "@/lib/postlint/visual/visual-requirements";
 import {
   mapVisualEvaluations,
@@ -6,14 +7,15 @@ import {
 } from "@/lib/postlint/visual/visual-lints";
 import type {
   AnalysisStatus,
+  BatchedVisualAnalysis,
   CampaignAnalysis,
   CampaignRequirement,
   LintResult,
   Transcript,
+  TargetPlatform,
   UnevaluatedRequirement,
   VideoFrame,
   VisualAnalysis,
-  VisualRequirementEvaluation,
 } from "@/lib/postlint/types";
 
 export type ContentAnalysisDependencies = {
@@ -28,7 +30,7 @@ export type ContentAnalysisDependencies = {
   analyzeVisual: (
     requirements: CampaignRequirement[],
     frames: VideoFrame[],
-  ) => Promise<VisualRequirementEvaluation[]>;
+  ) => Promise<BatchedVisualAnalysis>;
 };
 
 type ContentAnalysisInput = {
@@ -39,6 +41,7 @@ type ContentAnalysisInput = {
   rawBrief: string;
   framesDirectory: string;
   durationSeconds: number;
+  target: TargetPlatform;
 };
 
 export type ContentAnalysisOutput = {
@@ -47,6 +50,7 @@ export type ContentAnalysisOutput = {
   visualAnalysis: VisualAnalysis | null;
   campaignLintResults: LintResult[];
   visualLintResults: LintResult[];
+  platformLintResults: LintResult[];
   unevaluatedRequirements: UnevaluatedRequirement[];
   analysisStatus: AnalysisStatus;
 };
@@ -97,6 +101,7 @@ export async function analyzeContent(
       visualAnalysis: null,
       campaignLintResults: [],
       visualLintResults: [],
+      platformLintResults: [],
       unevaluatedRequirements: [],
       analysisStatus: {
         transcription: transcriptionStatus,
@@ -123,6 +128,7 @@ export async function analyzeContent(
   );
   let visualAnalysis: VisualAnalysis | null = null;
   let visualLintResults: LintResult[] = [];
+  let platformLintResults: LintResult[] = [];
   let visualUnavailable: UnevaluatedRequirement[] = [];
   let visualStatus: AnalysisStatus["visual"] = "no_supported_requirements";
 
@@ -133,19 +139,25 @@ export async function analyzeContent(
         input.framesDirectory,
         input.durationSeconds,
       );
-      const evaluations = await dependencies.analyzeVisual(
+      const batchedAnalysis = await dependencies.analyzeVisual(
         visualRequirements.supported,
         frames,
       );
       const checks = mapVisualEvaluations(
         visualRequirements.supported,
-        evaluations,
+        batchedAnalysis.evaluations,
+        frames.map((frame) => frame.timestampSeconds),
+      );
+      platformLintResults = runSafeZoneLints(
+        input.target,
+        batchedAnalysis.detectedElements,
         frames.map((frame) => frame.timestampSeconds),
       );
       visualAnalysis = {
         sampledFrameCount: frames.length,
         supportedRequirementCount: visualRequirements.supported.length,
         checks,
+        detectedElementCount: batchedAnalysis.detectedElements.length,
       };
       visualLintResults = checks
         .filter((check) => check.status === "pass")
@@ -191,6 +203,7 @@ export async function analyzeContent(
     visualAnalysis,
     campaignLintResults: campaignChecks.lintResults,
     visualLintResults,
+    platformLintResults,
     unevaluatedRequirements,
     analysisStatus: {
       transcription: transcriptionStatus,

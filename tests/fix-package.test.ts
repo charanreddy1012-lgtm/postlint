@@ -218,5 +218,29 @@ describe("Fix Package", () => {
       { passes: 1, warnings: 1, failures: 5 },
     );
   });
-});
 
+  it("turns a safe-zone warning into a deterministic placement recommendation", () => {
+    const input = report();
+    input.lintResults.push({
+      id: "platform-tiktok-001",
+      category: "platform",
+      severity: "warning",
+      title: "CTA may be obscured",
+      message: "CTA overlaps the estimated TikTok interaction rail.",
+      timestampStart: 8,
+      detected: "34% overlap",
+      expected: "Outside the estimated right-side interaction rail",
+      suggestion:
+        "Move “Use code FLOW20” farther toward the center-left safe area.",
+      platformZoneId: "interaction-rail",
+    });
+
+    const item = buildFixPackage(input).items.find(
+      (candidate) => candidate.id === "fix-platform-tiktok-001",
+    );
+    assert.equal(item?.timestampStart, 8);
+    assert.equal(item?.platformZoneId, "interaction-rail");
+    assert.match(item?.recommendedFix ?? "", /center-left/);
+    assert.equal(item?.replacementText, undefined);
+  });
+});

@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  type CSSProperties,
   type ChangeEvent,
   type DragEvent,
   type FormEvent,
@@ -13,6 +14,7 @@ import {
 import { buildFixPackage } from "@/lib/postlint/fixes/fix-package";
 import type { FixItem } from "@/lib/postlint/fixes/fix-package";
 import type { UploadConfig } from "@/lib/postlint/config/upload";
+import { platformProfile } from "@/lib/postlint/platform/profiles";
 import type {
   ApiError,
   LintResult,
@@ -507,29 +509,177 @@ function VisualSection({
 function VideoPreview({
   previewUrl,
   videoRef,
+  platform,
+  overlayEnabled,
+  highlightedZoneId,
+  onToggleOverlay,
+  reportMode = false,
 }: {
   previewUrl: string;
   videoRef: RefObject<HTMLVideoElement | null>;
+  platform: TargetPlatform;
+  overlayEnabled: boolean;
+  highlightedZoneId?: string | null;
+  onToggleOverlay: () => void;
+  reportMode?: boolean;
 }) {
+  const profile = platformProfile(platform);
+  const [videoAspectRatio, setVideoAspectRatio] = useState(9 / 16);
+  const canvasStyle = {
+    aspectRatio: videoAspectRatio,
+    maxWidth: `min(100%, ${430 * videoAspectRatio}px)`,
+  } as CSSProperties;
+
   return (
-    <section className="video-preview-section" id="video-preview">
+    <section
+      className={`video-preview-section ${reportMode ? "" : "video-preview-section--standalone"}`}
+      id="video-preview"
+    >
       <div>
         <p className="eyebrow text-slate-300">Video preview</p>
-        <h2>Inspect every finding in context</h2>
-        <p>Click any timestamp in the report to jump to that moment.</p>
+        <h2>
+          {reportMode
+            ? "Inspect every finding in context"
+            : `${profile.label} placement preview`}
+        </h2>
+        <p>
+          {reportMode
+            ? "Click any timestamp in the report to jump to that moment."
+            : "Review important text against PostLint’s estimated interface overlap zones before running preflight."}
+        </p>
+        <div className="safe-zone-controls">
+          <span>Estimated platform UI</span>
+          <button
+            type="button"
+            className={overlayEnabled ? "is-active" : ""}
+            onClick={onToggleOverlay}
+            aria-pressed={overlayEnabled}
+          >
+            {overlayEnabled ? "Hide overlay" : "Show overlay"}
+          </button>
+        </div>
       </div>
       <div className="video-stage">
-        <video
-          ref={videoRef}
-          src={previewUrl}
-          controls
-          playsInline
-          preload="metadata"
-          tabIndex={-1}
-        >
-          Your browser cannot preview this video format.
-        </video>
+        <div className="video-canvas" style={canvasStyle}>
+          <video
+            ref={videoRef}
+            src={previewUrl}
+            controls
+            playsInline
+            preload="metadata"
+            tabIndex={-1}
+            onLoadedMetadata={(event) => {
+              const { videoWidth, videoHeight } = event.currentTarget;
+              if (videoWidth > 0 && videoHeight > 0) {
+                setVideoAspectRatio(videoWidth / videoHeight);
+              }
+            }}
+          >
+            Your browser cannot preview this video format.
+          </video>
+          {overlayEnabled && (
+            <div
+              className="safe-zone-overlay"
+              aria-label={`Approximate PostLint UI safety zones for ${profile.label}`}
+            >
+              {profile.zones.map((zone) => (
+                <div
+                  className={`safe-zone safe-zone--${zone.id} ${highlightedZoneId === zone.id ? "is-highlighted" : ""}`}
+                  key={zone.id}
+                  style={{
+                    left: `${zone.rect.x * 100}%`,
+                    top: `${zone.rect.y * 100}%`,
+                    width: `${zone.rect.width * 100}%`,
+                    height: `${zone.rect.height * 100}%`,
+                  }}
+                  title={`${zone.label}: ${zone.reason}`}
+                >
+                  <span>{zone.label}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
+    </section>
+  );
+}
+
+function PlatformPlacementSection({
+  report,
+  onSeek,
+}: {
+  report: PreflightReport;
+  onSeek: (seconds: number, platformZoneId?: string) => void;
+}) {
+  const profile = platformProfile(report.target);
+  const platformResults = report.lintResults.filter(
+    (result) => result.category === "platform",
+  );
+  const automaticCheckCompleted = report.analysisStatus.visual === "complete";
+
+  return (
+    <section className="report-subsection report-subsection--platform">
+      <div className="subsection-heading campaign-heading">
+        <div>
+          <p className="eyebrow">Platform placement</p>
+          <h2>{profile.label} safe-zone preflight</h2>
+          <div className="provenance-row">
+            <span className="analysis-badge analysis-badge--observed">
+              AI-observed boxes
+            </span>
+            <span className="analysis-badge analysis-badge--code">
+              Deterministic geometry
+            </span>
+          </div>
+        </div>
+        <span
+          className={`mini-count ${platformResults.length > 0 ? "mini-count--warning" : "mini-count--neutral"}`}
+        >
+          {platformResults.length} placement {platformResults.length === 1 ? "risk" : "risks"}
+        </span>
+      </div>
+
+      <p className="visual-method-note visual-method-note--platform">
+        Approximate PostLint UI safety zones—not official platform specifications.
+        High-confidence creator-authored text boxes warn only when at least 20% of
+        their area intersects a configured interface zone.
+      </p>
+
+      {platformResults.length > 0 ? (
+        <div className="mt-5 space-y-3">
+          {platformResults.map((result) => (
+            <LintCard
+              key={result.id}
+              result={result}
+              index={report.lintResults.indexOf(result)}
+              onSeek={(seconds) => onSeek(seconds, result.platformZoneId)}
+            />
+          ))}
+        </div>
+      ) : automaticCheckCompleted ? (
+        <div className="availability-note mt-5">
+          <CheckIcon className="size-4 shrink-0" />
+          <div>
+            <strong>No high-confidence placement conflicts detected</strong>
+            <p>
+              This reflects sampled frames only. Continue reviewing important text
+              against the estimated {profile.label} overlay.
+            </p>
+          </div>
+        </div>
+      ) : (
+        <div className="availability-note mt-5">
+          <AlertIcon className="size-4 shrink-0" />
+          <div>
+            <strong>Use the overlay for placement review</strong>
+            <p>
+              Automatic high-confidence text boxes were not available for this run.
+              No placement result was fabricated.
+            </p>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -543,7 +693,7 @@ function FixCard({
   item: FixItem;
   copyStatus: string | null;
   onCopy: (text: string, id: string) => void;
-  onSeek: (seconds: number) => void;
+  onSeek: (seconds: number, platformZoneId?: string) => void;
 }) {
   return (
     <article className="fix-card">
@@ -560,7 +710,7 @@ function FixCard({
             <button
               className="timestamp-pill timestamp-button"
               type="button"
-              onClick={() => onSeek(item.timestampStart!)}
+              onClick={() => onSeek(item.timestampStart!, item.platformZoneId)}
             >
               {formatTimestamp(item.timestampStart)}
               {item.timestampEnd !== undefined &&
@@ -611,7 +761,7 @@ function FixPackageSection({
   onSeek,
 }: {
   report: PreflightReport;
-  onSeek: (seconds: number) => void;
+  onSeek: (seconds: number, platformZoneId?: string) => void;
 }) {
   const fixPackage = buildFixPackage(report);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
@@ -683,11 +833,17 @@ function Report({
   previewUrl,
   videoRef,
   onSeek,
+  overlayEnabled,
+  highlightedZoneId,
+  onToggleOverlay,
 }: {
   report: PreflightReport;
   previewUrl: string;
   videoRef: RefObject<HTMLVideoElement | null>;
-  onSeek: (seconds: number) => void;
+  onSeek: (seconds: number, platformZoneId?: string) => void;
+  overlayEnabled: boolean;
+  highlightedZoneId: string | null;
+  onToggleOverlay: () => void;
 }) {
   const targetName = targets.find((target) => target.id === report.target)?.name;
   const hasFailures = report.summary.failures > 0;
@@ -774,7 +930,15 @@ function Report({
         })}
       </div>
 
-      <VideoPreview previewUrl={previewUrl} videoRef={videoRef} />
+      <VideoPreview
+        previewUrl={previewUrl}
+        videoRef={videoRef}
+        platform={report.target}
+        overlayEnabled={overlayEnabled}
+        highlightedZoneId={highlightedZoneId}
+        onToggleOverlay={onToggleOverlay}
+        reportMode
+      />
 
       <div className="report-body">
         <div className="summary-strip">
@@ -827,6 +991,7 @@ function Report({
           ))}
         </div>
       </div>
+      <PlatformPlacementSection report={report} onSeek={onSeek} />
       <FixPackageSection report={report} onSeek={onSeek} />
       <CampaignSection report={report} onSeek={onSeek} />
       <VisualSection report={report} onSeek={onSeek} />
@@ -858,6 +1023,8 @@ export function PreflightWorkspace({
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<PreflightReport | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [safeZoneOverlayEnabled, setSafeZoneOverlayEnabled] = useState(true);
+  const [highlightedZoneId, setHighlightedZoneId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const previewUrlRef = useRef<string | null>(null);
@@ -892,9 +1059,11 @@ export function PreflightWorkspace({
     setPreviewUrl(nextPreviewUrl);
     setFile(nextFile);
     setReport(null);
+    setHighlightedZoneId(null);
   }
 
-  function seekVideo(timestampSeconds: number) {
+  function seekVideo(timestampSeconds: number, platformZoneId?: string) {
+    setHighlightedZoneId(platformZoneId ?? null);
     const video = videoRef.current;
     if (!video) return;
 
@@ -910,6 +1079,13 @@ export function PreflightWorkspace({
     else seek();
     video.scrollIntoView({ behavior: "smooth", block: "center" });
     video.focus({ preventScroll: true });
+  }
+
+  function selectTarget(nextTarget: TargetPlatform) {
+    if (isAnalyzing) return;
+    setTarget(nextTarget);
+    setReport(null);
+    setHighlightedZoneId(null);
   }
 
   function handleFileInput(event: ChangeEvent<HTMLInputElement>) {
@@ -987,6 +1163,7 @@ export function PreflightWorkspace({
     setTarget("tiktok");
     setDemoLoaded(true);
     setReport(null);
+    setHighlightedZoneId(null);
     setError(null);
   }
 
@@ -1129,7 +1306,7 @@ export function PreflightWorkspace({
                       name="target"
                       value={option.id}
                       checked={target === option.id}
-                      onChange={() => setTarget(option.id)}
+                      onChange={() => selectTarget(option.id)}
                       disabled={isAnalyzing}
                       className="sr-only"
                     />
@@ -1244,7 +1421,7 @@ export function PreflightWorkspace({
           </form>
 
           <aside className="side-panel">
-            <p className="eyebrow">Phase 1 + 2 + 3 + 4</p>
+            <p className="eyebrow">Phase 1 + 2 + 3 + 4 + 5</p>
             <h2 className="mt-2 text-lg font-semibold tracking-tight text-slate-900">
               Evidence pipeline
             </h2>
@@ -1260,6 +1437,7 @@ export function PreflightWorkspace({
                 ["Transcript", "Timestamped speech"],
                 ["Campaign", "Deterministic compliance"],
                 ["Visual", "Conservative frame evidence"],
+                ["Safe zones", "Platform-specific geometry"],
               ].map(([title, description], index) => (
                 <li key={title}>
                   <span>{String(index + 1).padStart(2, "0")}</span>
@@ -1291,12 +1469,30 @@ export function PreflightWorkspace({
           </div>
         )}
 
+        {previewUrl && !report && (
+          <VideoPreview
+            previewUrl={previewUrl}
+            videoRef={videoRef}
+            platform={target}
+            overlayEnabled={safeZoneOverlayEnabled}
+            highlightedZoneId={highlightedZoneId}
+            onToggleOverlay={() =>
+              setSafeZoneOverlayEnabled((enabled) => !enabled)
+            }
+          />
+        )}
+
         {report && previewUrl && (
           <Report
             report={report}
             previewUrl={previewUrl}
             videoRef={videoRef}
             onSeek={seekVideo}
+            overlayEnabled={safeZoneOverlayEnabled}
+            highlightedZoneId={highlightedZoneId}
+            onToggleOverlay={() =>
+              setSafeZoneOverlayEnabled((enabled) => !enabled)
+            }
           />
         )}
       </div>

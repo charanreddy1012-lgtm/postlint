@@ -113,6 +113,7 @@ export async function POST(request: Request): Promise<Response> {
         rawBrief,
         framesDirectory: join(temporaryDirectory, "frames"),
         durationSeconds: metadata.durationSeconds,
+        target,
       },
       {
         extractAudio: extractSpeechAudio,
@@ -126,6 +127,7 @@ export async function POST(request: Request): Promise<Response> {
       ...mediaLintResults,
       ...contentAnalysis.campaignLintResults,
       ...contentAnalysis.visualLintResults,
+      ...contentAnalysis.platformLintResults,
     ];
     const report: PreflightReport = {
       filename: upload.name,

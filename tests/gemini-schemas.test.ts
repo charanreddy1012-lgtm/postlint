@@ -46,7 +46,7 @@ describe("Gemini transcript response validation", () => {
 
 describe("Gemini visual response validation", () => {
   it("accepts a valid structured visual evaluation", () => {
-    const evaluations = validateVisualResponse(
+    const analysis = validateVisualResponse(
       JSON.stringify({
         evaluations: [
           {
@@ -58,9 +58,19 @@ describe("Gemini visual response validation", () => {
             confidence: "high",
           },
         ],
+        visualElements: [
+          {
+            frameTimestampSeconds: 3,
+            kind: "brand_text",
+            text: "FocusFlow",
+            box2d: [200, 100, 400, 500],
+            confidence: "high",
+          },
+        ],
       }),
     );
-    assert.equal(evaluations[0].status, "verified");
+    assert.equal(analysis.evaluations[0].status, "verified");
+    assert.equal(analysis.detectedElements[0].text, "FocusFlow");
   });
 
   it("rejects malformed visual output", () => {
@@ -77,6 +87,30 @@ describe("Gemini visual response validation", () => {
         '{"evaluations":[{"requirementId":"campaign-007","status":"verified","confidence":"high","startSeconds":6,"endSeconds":3}]}',
       ),
     );
+  });
+
+  it("discards malformed optional boxes without losing valid evaluations", () => {
+    const analysis = validateVisualResponse(
+      JSON.stringify({
+        evaluations: [
+          {
+            requirementId: "campaign-007",
+            status: "not_verified",
+            confidence: "high",
+          },
+        ],
+        visualElements: [
+          {
+            frameTimestampSeconds: 3,
+            kind: "cta",
+            box2d: [500, 100, 400, 600],
+            confidence: "high",
+          },
+        ],
+      }),
+    );
+    assert.equal(analysis.evaluations.length, 1);
+    assert.equal(analysis.detectedElements.length, 0);
   });
 });
 

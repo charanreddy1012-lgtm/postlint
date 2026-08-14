@@ -1,6 +1,7 @@
 export type LintCategory =
   | "media"
   | "visual"
+  | "platform"
   | "claim"
   | "campaign"
   | "accessibility";
@@ -19,6 +20,16 @@ export type LintResult = {
   suggestion?: string;
   expected?: string;
   detected?: string;
+  platformZoneId?: string;
+  contentBox?: NormalizedRect;
+  overlapRatio?: number;
+};
+
+export type NormalizedRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 };
 
 export type TranscriptSegment = {
@@ -74,6 +85,24 @@ export type VideoFrame = {
 
 export type VisualConfidence = "high" | "medium" | "low";
 
+export type DetectedVisualElementKind =
+  | "cta"
+  | "promo_code"
+  | "discount"
+  | "headline"
+  | "caption"
+  | "brand_text"
+  | "other_important_text";
+
+export type DetectedVisualElement = {
+  frameTimestampSeconds: number;
+  kind: DetectedVisualElementKind;
+  text?: string;
+  /** Gemini box_2d order: [ymin, xmin, ymax, xmax], normalized 0–1000. */
+  box2d: [number, number, number, number];
+  confidence: VisualConfidence;
+};
+
 export type VisualRequirementEvaluation = {
   requirementId: string;
   status: "verified" | "not_verified" | "uncertain";
@@ -100,6 +129,12 @@ export type VisualAnalysis = {
   sampledFrameCount: number;
   supportedRequirementCount: number;
   checks: VisualCheckResult[];
+  detectedElementCount?: number;
+};
+
+export type BatchedVisualAnalysis = {
+  evaluations: VisualRequirementEvaluation[];
+  detectedElements: DetectedVisualElement[];
 };
 
 export type AnalysisStatus = {

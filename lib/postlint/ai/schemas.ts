@@ -1,9 +1,10 @@
 import { z } from "zod";
 
 import type {
+  BatchedVisualAnalysis,
   CampaignRequirement,
+  DetectedVisualElement,
   Transcript,
-  VisualRequirementEvaluation,
 } from "@/lib/postlint/types";
 
 const transcriptSegmentSchema = z
@@ -85,9 +86,41 @@ const visualEvaluationSchema = z
     { message: "Visual evidence end must not precede its start." },
   );
 
+const visualElementKindSchema = z.enum([
+  "cta",
+  "promo_code",
+  "discount",
+  "headline",
+  "caption",
+  "brand_text",
+  "other_important_text",
+]);
+
+export const detectedVisualElementSchema = z
+  .object({
+    frameTimestampSeconds: z.number().finite().nonnegative(),
+    kind: visualElementKindSchema,
+    text: z.string().trim().min(1).max(1_000).optional(),
+    box2d: z.tuple([
+      z.number().finite().min(0).max(1000),
+      z.number().finite().min(0).max(1000),
+      z.number().finite().min(0).max(1000),
+      z.number().finite().min(0).max(1000),
+    ]),
+    confidence: z.enum(["high", "medium", "low"]),
+  })
+  .strict()
+  .refine(
+    (element) =>
+      element.box2d[0] < element.box2d[2] &&
+      element.box2d[1] < element.box2d[3],
+    { message: "Visual element box must have positive width and height." },
+  );
+
 export const visualResponseSchema = z
   .object({
     evaluations: z.array(visualEvaluationSchema).max(100),
+    visualElements: z.array(z.unknown()).max(200).optional().default([]),
   })
   .strict();
 
@@ -147,7 +180,7 @@ export const CAMPAIGN_JSON_SCHEMA = {
 export const VISUAL_JSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["evaluations"],
+  required: ["evaluations", "visualElements"],
   properties: {
     evaluations: {
       type: "array",
@@ -164,6 +197,36 @@ export const VISUAL_JSON_SCHEMA = {
           evidence: { type: "string" },
           startSeconds: { type: "number", minimum: 0 },
           endSeconds: { type: "number", minimum: 0 },
+          confidence: {
+            type: "string",
+            enum: ["high", "medium", "low"],
+          },
+        },
+      },
+    },
+    visualElements: {
+      type: "array",
+      description:
+        "Prominent creator-authored communication regions in sampled frames. box2d order is [ymin, xmin, ymax, xmax] on a 0–1000 grid.",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: [
+          "frameTimestampSeconds",
+          "kind",
+          "box2d",
+          "confidence",
+        ],
+        properties: {
+          frameTimestampSeconds: { type: "number", minimum: 0 },
+          kind: { type: "string", enum: visualElementKindSchema.options },
+          text: { type: "string" },
+          box2d: {
+            type: "array",
+            minItems: 4,
+            maxItems: 4,
+            items: { type: "number", minimum: 0, maximum: 1000 },
+          },
           confidence: {
             type: "string",
             enum: ["high", "medium", "low"],
@@ -196,6 +259,12 @@ export function validateCampaignResponse(raw: string): CampaignRequirement[] {
 
 export function validateVisualResponse(
   raw: string,
-): VisualRequirementEvaluation[] {
-  return visualResponseSchema.parse(parseJson(raw)).evaluations;
+): BatchedVisualAnalysis {
+  const parsed = visualResponseSchema.parse(parseJson(raw));
+  const detectedElements: DetectedVisualElement[] = [];
+  for (const candidate of parsed.visualElements) {
+    const result = detectedVisualElementSchema.safeParse(candidate);
+    if (result.success) detectedElements.push(result.data);
+  }
+  return { evaluations: parsed.evaluations, detectedElements };
 }

@@ -17,6 +17,7 @@ export type FixItem = {
   recommendedFix: string;
   replacementText?: string;
   provenance: FixProvenance;
+  platformZoneId?: string;
 };
 
 export type FixPackage = {
@@ -85,6 +86,7 @@ function fixFromLint(
       result.suggestion ?? "Review this finding and correct it before publishing.",
     replacementText: replacementFor(result, report),
     provenance: "deterministic",
+    platformZoneId: result.platformZoneId,
   };
 }
 
@@ -139,4 +141,3 @@ export function buildFixPackage(report: PreflightReport): FixPackage {
 
   return { items, copyAllText: copyableFixChecklist(items) };
 }
-

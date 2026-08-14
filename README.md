@@ -86,6 +86,24 @@ The client rejects an oversized selection before uploading. The route also check
 
 The multipart boundary is intentionally isolated in the route handler so a later direct object-storage upload can replace transport without rewriting the lint pipeline. Object storage is not implemented in this phase.
 
+## Phase 5: Platform Safe-Zone Preflight
+
+The selected TikTok, Instagram Reels, or YouTube Shorts target now drives a visible overlay on the video preview before preflight runs. Each profile contains centralized PostLint-owned rectangles for estimated top chrome, right-side interactions, and lower caption/navigation controls. Coordinates are normalized from 0–1 so the overlay scales with the actual visible video canvas.
+
+These are **approximate PostLint UI safety zones**, not official or pixel-perfect platform specifications. Profiles are intentionally easy to tune in `lib/postlint/platform/profiles.ts`.
+
+The optional automatic placement path extends the existing batched visual-frame response; it does not add a Gemini call. When that Phase 3 visual batch already runs, Gemini may return prominent creator-authored communication boxes using `[ymin, xmin, ymax, xmax]` coordinates on a 0–1000 grid. PostLint then:
+
+1. validates the structured element and sampled-frame timestamp;
+2. converts the box to normalized 0–1 geometry;
+3. ignores medium/low-confidence, malformed, and irrelevant detections;
+4. computes exact rectangle intersection in TypeScript;
+5. emits a non-blocking platform warning only when at least 20% of the content box overlaps an estimated interface zone.
+
+Warnings remain sampled-frame observations, not guarantees that every frame is safe. If visual analysis is unavailable or no eligible visual batch runs, the platform overlay remains fully usable and the report asks for manual placement review instead of fabricating a result.
+
+> **Design principle:** AI observes; deterministic code verifies geometry.
+
 ## Run locally
 
 Requirements: Node.js 20+ and npm. Packaged static media binaries are installed with dependencies; system `ffmpeg` and `ffprobe` remain optional development fallbacks.
