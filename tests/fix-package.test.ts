@@ -161,7 +161,7 @@ describe("Fix Package", () => {
     assert.equal(discount?.detected, "15%");
     assert.equal(discount?.expected, "20%");
     assert.equal(discount?.timestampStart, 9);
-    assert.equal(discount?.replacementText, "Get 20% off with code FLOW20.");
+    assert.equal(discount?.replacementText, undefined);
 
     assert.equal(
       fixes.items.find((item) => item.id === "fix-promo")?.replacementText,

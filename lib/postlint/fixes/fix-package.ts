@@ -34,13 +34,6 @@ function requirementFor(
   );
 }
 
-function promoCode(report: PreflightReport): string | undefined {
-  return report.campaign?.requirements.find(
-    (requirement) =>
-      requirement.type === "promo_code" && requirement.expectedText?.trim(),
-  )?.expectedText;
-}
-
 function replacementFor(
   result: LintResult,
   report: PreflightReport,
@@ -57,13 +50,9 @@ function replacementFor(
     case "required_mention":
     case "required_phrase":
       return requirement.expectedText;
-    case "discount": {
-      if (!result.expected) return undefined;
-      const code = promoCode(report);
-      return code
-        ? `Get ${result.expected} off with code ${code}.`
-        : `Get ${result.expected} off.`;
-    }
+    case "discount":
+      // A caption replacement cannot repair contradictory spoken-video content.
+      return undefined;
     case "call_to_action":
       return requirement.expectedText?.trim() || "Check it out.";
     default:

@@ -15,6 +15,17 @@ import { buildFixPackage } from "@/lib/postlint/fixes/fix-package";
 import type { FixItem } from "@/lib/postlint/fixes/fix-package";
 import type { UploadConfig } from "@/lib/postlint/config/upload";
 import { platformProfile } from "@/lib/postlint/platform/profiles";
+import {
+  buildIssueTimeline,
+  type IssueTimelineMarker,
+} from "@/lib/postlint/revisions/issue-timeline";
+import {
+  applySafeCaptionFixes,
+  buildRevisionActions,
+  buildRevisionPackage,
+  resetRevisionCaption,
+  type RevisionAction,
+} from "@/lib/postlint/revisions/revision-actions";
 import type {
   ApiError,
   LintResult,
@@ -45,6 +56,12 @@ const PROCESSING_STAGES = [
   "Inspecting visual evidence",
   "Building report",
 ] as const;
+
+type SeekHandler = (
+  seconds: number,
+  platformZoneId?: string,
+  findingId?: string,
+) => void;
 
 const FOCUSFLOW_DEMO_CAPTION =
   "FocusFlow helps me stay on track. Get 15% off with code FLOW15.";
@@ -119,16 +136,21 @@ function LintCard({
   result,
   index,
   onSeek,
+  selected = false,
 }: {
   result: LintResult;
   index: number;
-  onSeek: (seconds: number) => void;
+  onSeek: SeekHandler;
+  selected?: boolean;
 }) {
   const details = severityDetails(result.severity);
   const Icon = details.icon;
 
   return (
-    <article className={`lint-card lint-card--${details.color}`}>
+    <article
+      className={`lint-card lint-card--${details.color} ${selected ? "is-selected" : ""}`}
+      id={`finding-${result.id}`}
+    >
       <div className={`lint-icon lint-icon--${details.color}`}>
         <Icon className="size-4" />
       </div>
@@ -146,7 +168,13 @@ function LintCard({
           <button
             className="timestamp-pill timestamp-button"
             type="button"
-            onClick={() => onSeek(result.timestampStart!)}
+            onClick={() =>
+              onSeek(
+                result.timestampStart!,
+                result.platformZoneId,
+                result.id,
+              )
+            }
             aria-label={`Seek video to ${formatTimestamp(result.timestampStart)}`}
           >
             {formatTimestamp(result.timestampStart)}
@@ -190,10 +218,12 @@ function VisualCheckCard({
   check,
   index,
   onSeek,
+  selected = false,
 }: {
   check: VisualCheckResult;
   index: number;
-  onSeek: (seconds: number) => void;
+  onSeek: SeekHandler;
+  selected?: boolean;
 }) {
   const state =
     check.status === "pass"
@@ -204,7 +234,10 @@ function VisualCheckCard({
   const Icon = state.icon;
 
   return (
-    <article className={`lint-card lint-card--${state.color}`}>
+    <article
+      className={`lint-card lint-card--${state.color} ${selected ? "is-selected" : ""}`}
+      id={`finding-${check.id}`}
+    >
       <div className={`lint-icon lint-icon--${state.color}`}>
         <Icon className="size-4" />
       </div>
@@ -223,7 +256,7 @@ function VisualCheckCard({
           <button
             className="timestamp-pill timestamp-button"
             type="button"
-            onClick={() => onSeek(check.timestampStart!)}
+            onClick={() => onSeek(check.timestampStart!, undefined, check.id)}
             aria-label={`Seek video to ${formatTimestamp(check.timestampStart)}`}
           >
             {formatTimestamp(check.timestampStart)}
@@ -350,9 +383,11 @@ function TranscriptSection({
 function CampaignSection({
   report,
   onSeek,
+  selectedFindingId,
 }: {
   report: PreflightReport;
-  onSeek: (seconds: number) => void;
+  onSeek: SeekHandler;
+  selectedFindingId: string | null;
 }) {
   if (report.analysisStatus.campaign === "not_requested") return null;
 
@@ -414,6 +449,7 @@ function CampaignSection({
                 result={result}
                 index={index + 4}
                 onSeek={onSeek}
+                selected={selectedFindingId === result.id}
               />
             ))}
             {campaignUnevaluated.map((requirement) => (
@@ -432,9 +468,11 @@ function CampaignSection({
 function VisualSection({
   report,
   onSeek,
+  selectedFindingId,
 }: {
   report: PreflightReport;
-  onSeek: (seconds: number) => void;
+  onSeek: SeekHandler;
+  selectedFindingId: string | null;
 }) {
   const visualUnevaluated = report.unevaluatedRequirements.filter(
     (requirement) => requirement.type === "visual_requirement",
@@ -493,6 +531,7 @@ function VisualSection({
             check={check}
             index={report.lintResults.filter((result) => result.category !== "visual").length + index}
             onSeek={onSeek}
+            selected={selectedFindingId === check.id}
           />
         ))}
         {visualUnevaluated.map((requirement) => (
@@ -605,12 +644,375 @@ function VideoPreview({
   );
 }
 
+function timelineMarkerLabel(marker: IssueTimelineMarker): string {
+  const type =
+    marker.type === "fail"
+      ? "Manual edit"
+      : marker.type === "warning"
+        ? "Warning"
+        : "Review";
+  return `${type} at ${formatTimestamp(marker.timestampStart)}: ${marker.title}. ${marker.detail}`;
+}
+
+function IssueTimeline({
+  actions,
+  duration,
+  selectedFindingId,
+  onSeek,
+}: {
+  actions: RevisionAction[];
+  duration: number;
+  selectedFindingId: string | null;
+  onSeek: SeekHandler;
+}) {
+  const markers = buildIssueTimeline(actions, duration);
+  const maximumLane = markers.reduce(
+    (maximum, marker) => Math.max(maximum, marker.lane),
+    0,
+  );
+
+  return (
+    <section className="issue-timeline-section" aria-labelledby="issue-timeline-title">
+      <div className="issue-timeline-heading">
+        <div>
+          <p className="eyebrow">Issue timeline</p>
+          <h2 id="issue-timeline-title">Timed revision points</h2>
+        </div>
+        <span className="mini-count mini-count--neutral">
+          {markers.length} timed {markers.length === 1 ? "issue" : "issues"}
+        </span>
+      </div>
+
+      {markers.length === 0 ? (
+        <p className="issue-timeline-empty">
+          No actionable findings in this report have timestamps.
+        </p>
+      ) : (
+        <div className="issue-timeline">
+          <div
+            className="issue-timeline__plot"
+            style={{ height: `${54 + maximumLane * 26}px` }}
+          >
+            <div className="issue-timeline__track" aria-hidden="true" />
+            {markers.map((marker) => {
+              const visualPosition = Math.min(
+                98.5,
+                Math.max(1.5, marker.position * 100),
+              );
+              const selected = selectedFindingId === marker.sourceLintId;
+              return (
+                <button
+                  key={marker.id}
+                  type="button"
+                  className={`issue-marker issue-marker--${marker.type} ${selected ? "is-selected" : ""}`}
+                  style={{
+                    left: `${visualPosition}%`,
+                    top: `${8 + marker.lane * 26}px`,
+                  }}
+                  onClick={() =>
+                    onSeek(
+                      marker.timestampStart,
+                      marker.platformZoneId,
+                      marker.sourceLintId,
+                    )
+                  }
+                  aria-label={timelineMarkerLabel(marker)}
+                  aria-pressed={selected}
+                >
+                  <span className="issue-marker__dot" aria-hidden="true" />
+                  <span className="issue-timeline__tooltip" role="tooltip">
+                    <strong>{formatTimestamp(marker.timestampStart)}</strong>
+                    <span>{marker.title}</span>
+                    <small>{marker.detail}</small>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="issue-timeline__scale" aria-hidden="true">
+            <span>00:00</span>
+            <span>{formatTimestamp(duration)}</span>
+          </div>
+          <div className="issue-timeline__legend">
+            <span><i className="is-fail" />Manual edit</span>
+            <span><i className="is-warning" />Warning</span>
+            <span><i className="is-review" />Review</span>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function RevisionActionCard({
+  action,
+  applied,
+  selected,
+  onSeek,
+}: {
+  action: RevisionAction;
+  applied?: boolean;
+  selected: boolean;
+  onSeek: SeekHandler;
+}) {
+  const label =
+    action.type === "safe_auto_fix"
+      ? applied
+        ? "Safe fix applied"
+        : "Safe caption fix"
+      : action.type === "manual_edit"
+        ? "Manual edit"
+        : "Review";
+
+  return (
+    <article
+      className={`revision-action revision-action--${action.type} ${selected ? "is-selected" : ""}`}
+    >
+      <div className="revision-action__heading">
+        <div>
+          <span>{label}</span>
+          <h3>{action.title}</h3>
+        </div>
+        <span className="revision-target">{action.target}</span>
+      </div>
+      {action.timestampStart !== undefined && (
+        <button
+          type="button"
+          className="timestamp-pill timestamp-button"
+          onClick={() =>
+            onSeek(
+              action.timestampStart!,
+              action.platformZoneId,
+              action.sourceLintId,
+            )
+          }
+        >
+          {formatTimestamp(action.timestampStart)}
+          {action.timestampEnd !== undefined &&
+            `–${formatTimestamp(action.timestampEnd)}`}
+        </button>
+      )}
+      <p>{action.explanation}</p>
+      {(action.detected || action.expected) && (
+        <div className="revision-comparison">
+          {action.detected && <span>Detected: <strong>{action.detected}</strong></span>}
+          {action.expected && <span>Required: <strong>{action.expected}</strong></span>}
+        </div>
+      )}
+      {action.replacementText && (
+        <code className="revision-replacement">{action.replacementText}</code>
+      )}
+    </article>
+  );
+}
+
+function RevisionActionGroup({
+  title,
+  actions,
+  appliedActionIds,
+  selectedFindingId,
+  onSeek,
+}: {
+  title: string;
+  actions: RevisionAction[];
+  appliedActionIds: ReadonlySet<string>;
+  selectedFindingId: string | null;
+  onSeek: SeekHandler;
+}) {
+  if (actions.length === 0) return null;
+  return (
+    <div className="revision-action-group">
+      <h3>{title}</h3>
+      <div className="revision-action-list">
+        {actions.map((action) => (
+          <RevisionActionCard
+            action={action}
+            applied={appliedActionIds.has(action.id)}
+            key={action.id}
+            selected={selectedFindingId === action.sourceLintId}
+            onSeek={onSeek}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RevisionAssistantSection({
+  actions,
+  originalCaption,
+  selectedFindingId,
+  onSeek,
+}: {
+  actions: RevisionAction[];
+  originalCaption: string;
+  selectedFindingId: string | null;
+  onSeek: SeekHandler;
+}) {
+  const [revisionDraft, setRevisionDraft] = useState(originalCaption);
+  const [appliedActionIds, setAppliedActionIds] = useState<string[]>([]);
+  const [copyStatus, setCopyStatus] = useState<
+    "caption" | "package" | "error" | null
+  >(null);
+  const safeActions = actions.filter(
+    (action) => action.type === "safe_auto_fix",
+  );
+  const manualActions = actions.filter(
+    (action) => action.type === "manual_edit",
+  );
+  const reviewActions = actions.filter((action) => action.type === "review");
+  const appliedSet = new Set(appliedActionIds);
+  const revisionPackage = buildRevisionPackage(actions, appliedSet);
+  const remainingCount = manualActions.length + reviewActions.length;
+
+  function applySafeFixes() {
+    setRevisionDraft(applySafeCaptionFixes(originalCaption, actions));
+    setAppliedActionIds(safeActions.map((action) => action.id));
+  }
+
+  function resetDraft() {
+    setRevisionDraft(resetRevisionCaption(originalCaption));
+    setAppliedActionIds([]);
+    setCopyStatus(null);
+  }
+
+  async function handleCopy(
+    value: string,
+    status: "caption" | "package",
+  ) {
+    try {
+      await copyText(value);
+      setCopyStatus(status);
+      window.setTimeout(() => setCopyStatus(null), 1_800);
+    } catch {
+      setCopyStatus("error");
+    }
+  }
+
+  return (
+    <section className="report-subsection revision-assistant">
+      <div className="revision-assistant__hero">
+        <div>
+          <p className="eyebrow">Revision Assistant</p>
+          <h2>{actions.length} {actions.length === 1 ? "issue" : "issues"} organized</h2>
+          <p>
+            Safe automation only acts when the correction is objective. PostLint
+            never auto-fixes what it cannot safely prove.
+          </p>
+        </div>
+        <div className="revision-assistant__actions">
+          <div className="revision-counts">
+            <span><strong>{safeActions.length}</strong> safe {safeActions.length === 1 ? "fix" : "fixes"}</span>
+            <span><strong>{manualActions.length}</strong> manual {manualActions.length === 1 ? "edit" : "edits"}</span>
+            <span><strong>{reviewActions.length}</strong> review</span>
+          </div>
+          <button
+            type="button"
+            className="apply-safe-fixes"
+            onClick={applySafeFixes}
+            disabled={safeActions.length === 0 || appliedActionIds.length === safeActions.length}
+          >
+            {safeActions.length === 0
+              ? "No safe fixes available"
+              : appliedActionIds.length === safeActions.length
+                ? "Safe fixes applied"
+                : "Apply safe fixes"}
+          </button>
+        </div>
+      </div>
+
+      {appliedActionIds.length > 0 && (
+        <div className="revision-status" role="status">
+          <CheckIcon className="size-4 shrink-0" />
+          <p>
+            <strong>{appliedActionIds.length} safe {appliedActionIds.length === 1 ? "fix" : "fixes"} applied.</strong>{" "}
+            {remainingCount} {remainingCount === 1 ? "issue still requires" : "issues still require"} manual editing or review.
+          </p>
+        </div>
+      )}
+
+      <div className="caption-revision-grid">
+        <div className="caption-revision-card">
+          <span>Original caption</span>
+          <p>{originalCaption || "No caption was submitted."}</p>
+        </div>
+        <div className="caption-revision-card caption-revision-card--revised">
+          <div className="caption-revision-card__heading">
+            <span>Revised caption</span>
+            <div>
+              <button type="button" onClick={() => handleCopy(revisionDraft, "caption")}>
+                {copyStatus === "caption" ? "Copied" : "Copy revised caption"}
+              </button>
+              <button type="button" onClick={resetDraft}>Reset</button>
+            </div>
+          </div>
+          <p>{revisionDraft || "No caption was submitted."}</p>
+          {revisionPackage.safeApplied.length > 0 && (
+            <div className="caption-additions" aria-label="Applied caption additions">
+              {revisionPackage.safeApplied.map((action) => (
+                <span key={action.id}>Added: {action.replacementText}</span>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {copyStatus === "error" && (
+        <p className="copy-error" role="status">
+          Clipboard access was blocked. Select and copy the text manually.
+        </p>
+      )}
+
+      <div className="revision-groups">
+        <RevisionActionGroup
+          title="Safe caption fixes"
+          actions={safeActions}
+          appliedActionIds={appliedSet}
+          selectedFindingId={selectedFindingId}
+          onSeek={onSeek}
+        />
+        <RevisionActionGroup
+          title="Manual edits"
+          actions={manualActions}
+          appliedActionIds={appliedSet}
+          selectedFindingId={selectedFindingId}
+          onSeek={onSeek}
+        />
+        <RevisionActionGroup
+          title="Review"
+          actions={reviewActions}
+          appliedActionIds={appliedSet}
+          selectedFindingId={selectedFindingId}
+          onSeek={onSeek}
+        />
+      </div>
+
+      <div className="revision-package">
+        <div>
+          <p className="eyebrow">Revision Package</p>
+          <h3>Creator handoff</h3>
+          <p>Original findings remain unchanged until revised content is run again.</p>
+        </div>
+        <button
+          type="button"
+          className="copy-all-button"
+          onClick={() => handleCopy(revisionPackage.copyText, "package")}
+        >
+          {copyStatus === "package" ? "Revision package copied" : "Copy revision package"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function PlatformPlacementSection({
   report,
   onSeek,
+  selectedFindingId,
 }: {
   report: PreflightReport;
-  onSeek: (seconds: number, platformZoneId?: string) => void;
+  onSeek: SeekHandler;
+  selectedFindingId: string | null;
 }) {
   const profile = platformProfile(report.target);
   const platformResults = report.lintResults.filter(
@@ -653,7 +1055,8 @@ function PlatformPlacementSection({
               key={result.id}
               result={result}
               index={report.lintResults.indexOf(result)}
-              onSeek={(seconds) => onSeek(seconds, result.platformZoneId)}
+              onSeek={onSeek}
+              selected={selectedFindingId === result.id}
             />
           ))}
         </div>
@@ -693,7 +1096,7 @@ function FixCard({
   item: FixItem;
   copyStatus: string | null;
   onCopy: (text: string, id: string) => void;
-  onSeek: (seconds: number, platformZoneId?: string) => void;
+  onSeek: SeekHandler;
 }) {
   return (
     <article className="fix-card">
@@ -710,7 +1113,13 @@ function FixCard({
             <button
               className="timestamp-pill timestamp-button"
               type="button"
-              onClick={() => onSeek(item.timestampStart!, item.platformZoneId)}
+              onClick={() =>
+                onSeek(
+                  item.timestampStart!,
+                  item.platformZoneId,
+                  item.id.replace(/^fix-/, ""),
+                )
+              }
             >
               {formatTimestamp(item.timestampStart)}
               {item.timestampEnd !== undefined &&
@@ -761,7 +1170,7 @@ function FixPackageSection({
   onSeek,
 }: {
   report: PreflightReport;
-  onSeek: (seconds: number, platformZoneId?: string) => void;
+  onSeek: SeekHandler;
 }) {
   const fixPackage = buildFixPackage(report);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
@@ -830,19 +1239,23 @@ function FixPackageSection({
 
 function Report({
   report,
+  originalCaption,
   previewUrl,
   videoRef,
   onSeek,
   overlayEnabled,
   highlightedZoneId,
+  selectedFindingId,
   onToggleOverlay,
 }: {
   report: PreflightReport;
+  originalCaption: string;
   previewUrl: string;
   videoRef: RefObject<HTMLVideoElement | null>;
-  onSeek: (seconds: number, platformZoneId?: string) => void;
+  onSeek: SeekHandler;
   overlayEnabled: boolean;
   highlightedZoneId: string | null;
+  selectedFindingId: string | null;
   onToggleOverlay: () => void;
 }) {
   const targetName = targets.find((target) => target.id === report.target)?.name;
@@ -860,6 +1273,7 @@ function Report({
     report.visualAnalysis?.checks.filter((check) => check.status !== "pass").length ?? 0;
   const nonScoringCount = report.unevaluatedRequirements.length + visualReviewCount;
   const completedCheckCount = report.lintResults.length + nonScoringCount;
+  const revisionActions = buildRevisionActions(report);
 
   const metadata = [
     {
@@ -940,6 +1354,13 @@ function Report({
         reportMode
       />
 
+      <IssueTimeline
+        actions={revisionActions}
+        duration={report.metadata.durationSeconds}
+        selectedFindingId={selectedFindingId}
+        onSeek={onSeek}
+      />
+
       <div className="report-body">
         <div className="summary-strip">
           <div>
@@ -987,14 +1408,33 @@ function Report({
               result={result}
               index={index}
               onSeek={onSeek}
+              selected={selectedFindingId === result.id}
             />
           ))}
         </div>
       </div>
-      <PlatformPlacementSection report={report} onSeek={onSeek} />
+      <RevisionAssistantSection
+        actions={revisionActions}
+        originalCaption={originalCaption}
+        selectedFindingId={selectedFindingId}
+        onSeek={onSeek}
+      />
+      <PlatformPlacementSection
+        report={report}
+        onSeek={onSeek}
+        selectedFindingId={selectedFindingId}
+      />
       <FixPackageSection report={report} onSeek={onSeek} />
-      <CampaignSection report={report} onSeek={onSeek} />
-      <VisualSection report={report} onSeek={onSeek} />
+      <CampaignSection
+        report={report}
+        onSeek={onSeek}
+        selectedFindingId={selectedFindingId}
+      />
+      <VisualSection
+        report={report}
+        onSeek={onSeek}
+        selectedFindingId={selectedFindingId}
+      />
       <TranscriptSection
         transcript={report.transcript}
         status={report.analysisStatus.transcription}
@@ -1015,6 +1455,7 @@ export function PreflightWorkspace({
   const [file, setFile] = useState<File | null>(null);
   const [target, setTarget] = useState<TargetPlatform>("tiktok");
   const [caption, setCaption] = useState("");
+  const [analyzedCaption, setAnalyzedCaption] = useState("");
   const [brief, setBrief] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -1025,6 +1466,7 @@ export function PreflightWorkspace({
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [safeZoneOverlayEnabled, setSafeZoneOverlayEnabled] = useState(true);
   const [highlightedZoneId, setHighlightedZoneId] = useState<string | null>(null);
+  const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const previewUrlRef = useRef<string | null>(null);
@@ -1060,10 +1502,16 @@ export function PreflightWorkspace({
     setFile(nextFile);
     setReport(null);
     setHighlightedZoneId(null);
+    setSelectedFindingId(null);
   }
 
-  function seekVideo(timestampSeconds: number, platformZoneId?: string) {
+  function seekVideo(
+    timestampSeconds: number,
+    platformZoneId?: string,
+    findingId?: string,
+  ) {
     setHighlightedZoneId(platformZoneId ?? null);
+    setSelectedFindingId(findingId ?? null);
     const video = videoRef.current;
     if (!video) return;
 
@@ -1086,6 +1534,7 @@ export function PreflightWorkspace({
     setTarget(nextTarget);
     setReport(null);
     setHighlightedZoneId(null);
+    setSelectedFindingId(null);
   }
 
   function handleFileInput(event: ChangeEvent<HTMLInputElement>) {
@@ -1134,6 +1583,7 @@ export function PreflightWorkspace({
         throw new Error("error" in payload ? payload.error : "Preflight failed.");
       }
       setReport(payload);
+      setAnalyzedCaption(caption);
       window.setTimeout(() => {
         document.getElementById("report")?.scrollIntoView({
           behavior: "smooth",
@@ -1164,6 +1614,7 @@ export function PreflightWorkspace({
     setDemoLoaded(true);
     setReport(null);
     setHighlightedZoneId(null);
+    setSelectedFindingId(null);
     setError(null);
   }
 
@@ -1421,7 +1872,7 @@ export function PreflightWorkspace({
           </form>
 
           <aside className="side-panel">
-            <p className="eyebrow">Phase 1 + 2 + 3 + 4 + 5</p>
+            <p className="eyebrow">Phase 1 + 2 + 3 + 4 + 5 + 6</p>
             <h2 className="mt-2 text-lg font-semibold tracking-tight text-slate-900">
               Evidence pipeline
             </h2>
@@ -1438,6 +1889,7 @@ export function PreflightWorkspace({
                 ["Campaign", "Deterministic compliance"],
                 ["Visual", "Conservative frame evidence"],
                 ["Safe zones", "Platform-specific geometry"],
+                ["Revision", "Safe fixes and timed edits"],
               ].map(([title, description], index) => (
                 <li key={title}>
                   <span>{String(index + 1).padStart(2, "0")}</span>
@@ -1485,11 +1937,13 @@ export function PreflightWorkspace({
         {report && previewUrl && (
           <Report
             report={report}
+            originalCaption={analyzedCaption}
             previewUrl={previewUrl}
             videoRef={videoRef}
             onSeek={seekVideo}
             overlayEnabled={safeZoneOverlayEnabled}
             highlightedZoneId={highlightedZoneId}
+            selectedFindingId={selectedFindingId}
             onToggleOverlay={() =>
               setSafeZoneOverlayEnabled((enabled) => !enabled)
             }

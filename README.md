@@ -104,6 +104,22 @@ Warnings remain sampled-frame observations, not guarantees that every frame is s
 
 > **Design principle:** AI observes; deterministic code verifies geometry.
 
+## Phase 6: Revision Assistant and Issue Timeline
+
+Phase 6 turns existing findings into a creator revision workflow without changing the original report or adding an AI request. A pure deterministic classifier separates findings into:
+
+- **Safe caption fix** — conservative disclosure tokens, exact caption-safe required text or promo codes, and deterministic CTA templates.
+- **Manual edit** — discount conflicts, prohibited phrases, media/export problems, clear missing visual requirements, and platform placement collisions.
+- **Review** — uncertain visual evidence and requirements PostLint could not safely evaluate.
+
+Safe fixes update a separate revision-caption draft; they never overwrite the submitted caption or uploaded video. Applying fixes is idempotent, reset restores the original caption, and the original preflight verdict remains unchanged until the creator edits the source and runs PostLint again. Discount mismatches and spoken prohibited phrases never become caption mutations.
+
+The **Revision Package** groups applied or available safe fixes, manual edits, review items, and platform placement work into a copyable handoff. It is produced entirely from the existing `LintResult`, campaign, visual, and unevaluated-requirement data.
+
+The **Issue Timeline** positions only timed actionable findings using `timestamp / video duration`, clamped to the video bounds. Nearby markers use deterministic lanes, are keyboard focusable, expose descriptive labels, seek the existing player, highlight the corresponding finding, and preserve platform-zone emphasis.
+
+> **Automation principle:** PostLint never auto-fixes what it cannot safely prove.
+
 ## Run locally
 
 Requirements: Node.js 20+ and npm. Packaged static media binaries are installed with dependencies; system `ffmpeg` and `ffprobe` remain optional development fallbacks.
